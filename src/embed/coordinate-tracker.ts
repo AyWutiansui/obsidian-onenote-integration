@@ -1,13 +1,31 @@
 /**
  * Calculate the Electron chrome offset (title bar + toolbar height).
  * getBoundingClientRect returns viewport-relative coords; we need screen-absolute.
+ * 
+ * On Windows Chromium, window.screenX/Y and outerHeight are in physical pixels,
+ * innerHeight is in CSS pixels. Win32 SetWindowPos expects physical pixels.
+ * Electron's getContentBounds() returns physical pixels directly.
  */
 export function calculateChromeOffset(): { x: number; y: number } {
-  let offsetX = window.screenX;
-  let offsetY = window.screenY;
+  // Strategy 1: Try electron.remote (available when enableRemoteModule=true)
   try {
     const electron = require('electron');
     const win = electron.remote?.getCurrentWindow?.();
+    if (win) {
+      const bounds = win.getContentBounds();
+      if (bounds && (bounds.x !== 0 || bounds.y !== 0)) {
+        // getContentBounds() returns physical pixels — use directly
+        return { x: bounds.x, y: bounds.y };
+      }
+    }
+  } catch {
+    // Electron remote not available
+  }
+
+  // Strategy 2: Try @electron/remote (newer API)
+  try {
+    const remote = require('@electron/remote');
+    const win = remote?.getCurrentWindow?.();
     if (win) {
       const bounds = win.getContentBounds();
       if (bounds && (bounds.x !== 0 || bounds.y !== 0)) {
@@ -15,11 +33,14 @@ export function calculateChromeOffset(): { x: number; y: number } {
       }
     }
   } catch {
-    // Electron API not available — fall through to estimation
+    // @electron/remote not available
   }
-  // Fallback: estimate chrome height from outer/inner difference
+
+  // Strategy 3: Use window.screenX/Y + chrome height
+  // outerHeight and screenX/Y are in physical pixels on Windows Chromium,
+  // innerHeight is in CSS pixels. Chrome height = outerHeight - innerHeight (physical).
   const chromeH = window.outerHeight - window.innerHeight;
-  return { x: offsetX, y: offsetY + chromeH };
+  return { x: window.screenX, y: window.screenY + chromeH };
 }
 
 /**
@@ -118,6 +139,13 @@ export class CoordinateTracker {
       this._rafId = window.setTimeout(poll, 500);
     };
     this._rafId = window.setTimeout(poll, 500);
+  }
+
+  /** Force send position even if coordinates haven't changed (bypasses cache). */
+  forceUpdate(): void {
+    if (this._disposed || !this._container.isConnected) return;
+    this._lastRect = null;  // Invalidate cache to force callback
+    this.update();
   }
 
   /** Recalculate and report position. Only fires callback if position changed. */

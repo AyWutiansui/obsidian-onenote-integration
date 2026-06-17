@@ -736,25 +736,29 @@ export class OneNoteLocalService {
    * Uses Electron's remote.getCurrentWindow() to get the native window handle.
    */
   getObsidianWindowHwnd(): string | null {
-    try {
-      const electron = require('electron');
-      // In Obsidian's renderer, remote.getCurrentWindow() gives access to the host window
-      const win = electron.remote?.getCurrentWindow?.();
-      if (win) {
-        const hwnd = win.getNativeWindowHandle();
-        // Windows returns a Buffer with little-endian HWND
-        if (hwnd && hwnd.length >= 4) {
-          const handle = hwnd.readUInt32LE(0);
-          return handle.toString();
-        }
-      }
+    // Try multiple strategies to get the Obsidian window handle
+    const strategies = [
+      () => require('electron').remote?.getCurrentWindow?.(),
+      () => require('@electron/remote')?.getCurrentWindow?.(),
+    ];
 
-      console.warn('[OneNote] Could not get Obsidian window handle via electron.remote');
-      return null;
-    } catch (e) {
-      console.warn('[OneNote] Error getting Obsidian window handle:', e);
-      return null;
+    for (const getWin of strategies) {
+      try {
+        const win = getWin();
+        if (win) {
+          const hwnd = win.getNativeWindowHandle();
+          if (hwnd && hwnd.length >= 4) {
+            const handle = hwnd.readUInt32LE(0);
+            return handle.toString();
+          }
+        }
+      } catch {
+        // Strategy not available, try next
+      }
     }
+
+    console.warn('[OneNote] Could not get Obsidian window handle');
+    return null;
   }
 
   /**

@@ -129,6 +129,12 @@ export class OneNoteCodeBlockRenderer {
             });
             currentTracker = tracker;
 
+            // Force position updates for the first 2 seconds — OneNote may
+            // override our SetWindowPos during startup (first launch).
+            for (const delay of [200, 500, 1000, 1500, 2000]) {
+              setTimeout(() => tracker.forceUpdate(), delay);
+            }
+
             cleanupEmbed = async () => {
               await doDetach();
               cleanupEmbed = null;

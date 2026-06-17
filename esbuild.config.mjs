@@ -12,6 +12,7 @@ const buildOptions = {
   external: [
     'obsidian',
     'electron',
+    '@electron/remote',
     'child_process',
     '@codemirror/autocomplete',
     '@codemirror/closebrackets',
