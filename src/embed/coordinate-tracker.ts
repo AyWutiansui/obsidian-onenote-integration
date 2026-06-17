@@ -158,11 +158,19 @@ export class CoordinateTracker {
     // Convert CSS pixels to physical pixels (Win32 API uses physical pixels)
     // currentDpr already defined at top of update()
 
+    // Account for border width: getBoundingClientRect() returns outer border edge,
+    // but OneNote should align to the inner content area (inside the border)
+    const style = getComputedStyle(this._container);
+    const borderLeft = parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = parseFloat(style.borderTopWidth) || 0;
+    const borderRight = parseFloat(style.borderRightWidth) || 0;
+
     // Calculate where OneNote window would be positioned (physical pixels)
-    const physWidth = Math.round(rect.width * currentDpr);
-    const embedHeight = Math.max(400, Math.min(1200, Math.round(rect.width * (2/3) * currentDpr)));
-    const physLeft = Math.round(rect.left * currentDpr);
-    const physTop = Math.round(rect.top * currentDpr);
+    // Offset inward by border width, reduce width by left+right borders
+    const physLeft = Math.round((rect.left + borderLeft) * currentDpr);
+    const physTop = Math.round((rect.top + borderTop) * currentDpr);
+    const physWidth = Math.round((rect.width - borderLeft - borderRight) * currentDpr);
+    const embedHeight = Math.max(400, Math.min(1200, Math.round((rect.width - borderLeft - borderRight) * (2/3) * currentDpr)));
     const oneNoteTop = physTop + this._offset.y;
     const oneNoteBottom = oneNoteTop + embedHeight;
 
