@@ -1,0 +1,1014 @@
+import { Notice } from 'obsidian';
+import { LocalOneNotePage, LocalOneNoteSection, LocalOneNoteNotebook } from './types';
+import { EmbedSessionManager } from './services/embed-session';
+import { WindowEmbedManager } from './embed/window-embed-manager';
+import {
+  parseOneNoteHierarchy,
+  extractSectionsForNotebook,
+  extractPagesForSection,
+  parseOneNoteSections,
+  parseOneNotePages,
+  parseOneNotePageXml,
+  fallbackTextExtract
+} from './services/onenote-xml-parser';
+
+// Re-export types so existing importers (e.g. onenote-view.ts) still work
+// when they import from this module.
+export type { LocalOneNotePage, LocalOneNoteSection, LocalOneNoteNotebook } from './types';
+
+export class OneNoteLocalService {
+  private isWindows: boolean;
+  private isMac: boolean;
+  private hierarchyCache: LocalOneNoteNotebook[] | null = null;
+  private _cacheTimestamp: number = 0;
+  private static readonly CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  private _urlCache: Map<string, string> = new Map();   // pageId → onenote:// URL
+  private _pluginDir: string = '';
+  private _embedSession = new EmbedSessionManager();
+  private _embedManager: WindowEmbedManager | null = null;
+
+  /** Sanitize a pageId for safe interpolation inside PowerShell double-quoted strings. */
+  private static sanitizeForPs(pageId: string): string {
+    return pageId.replace(/["`$]/g, '');
+  }
+
+  setPluginDir(dir: string): void {
+    this._pluginDir = dir;
+    this._embedManager = new WindowEmbedManager(dir);
+  }
+
+  constructor() {
+    this.isWindows = navigator.platform.toLowerCase().includes('win');
+    this.isMac = navigator.platform.toLowerCase().includes('mac');
+  }
+
+  /**
+   * Allocate a new embed session and mark it as the only active owner.
+   * The code block renderer uses this to ignore stale scroll/resize events
+   * from previously rendered embeds.
+   */
+  beginEmbedSession(): number {
+    return this._embedSession.beginEmbedSession();
+  }
+
+  isActiveEmbedSession(sessionId: number): boolean {
+    return this._embedSession.isActiveEmbedSession(sessionId);
+  }
+
+  endEmbedSession(sessionId: number): void {
+    this._embedSession.endEmbedSession(sessionId);
+  }
+
+  /**
+   * Check if the hierarchy cache is still valid (not expired).
+   */
+  private isCacheValid(): boolean {
+    return this.hierarchyCache !== null &&
+           this.hierarchyCache.length > 0 &&
+           (Date.now() - this._cacheTimestamp) < OneNoteLocalService.CACHE_TTL_MS;
+  }
+
+  /**
+   * Invalidate the hierarchy cache, forcing a fresh fetch on next access.
+   */
+  invalidateCache(): void {
+    this.hierarchyCache = null;
+    this._cacheTimestamp = 0;
+    this._urlCache.clear();
+    console.log('[OneNote] Cache invalidated');
+  }
+
+  /**
+   * Navigate OneNote to a specific page. Uses PowerShell + GetHyperlinkToObject
+   * to get the correct onenote:// URL, then opens it with ShellExecute.
+   * This is more reliable than repos.exe which has COM late-binding issues.
+   */
+  async navigateToPage(pageId: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      try {
+        const { exec } = require('child_process');
+
+        // PowerShell script: GetHyperlinkToObject → Start-Process
+        const safeId = OneNoteLocalService.sanitizeForPs(pageId);
+        const psScript =
+          'try {' +
+          `$oneNote = New-Object -ComObject OneNote.Application;` +
+          `$url = "";` +
+          `$oneNote.GetHyperlinkToObject("${safeId}", "", [ref]$url);` +
+          'if ($url) { Start-Process $url; exit 0; }' +
+          'else { Write-Error "GetHyperlinkToObject returned empty URL"; exit 1; }' +
+          '} catch {' +
+          'Write-Error $_.Exception.Message;' +
+          'exit 1;' +
+          '}';
+
+        const encodedScript = Buffer.from(psScript, 'utf16le').toString('base64');
+
+        exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
+          encoding: 'utf-8',
+          timeout: 10000
+        }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            console.error('[OneNote] PowerShell navigate failed:', error.message);
+            resolve(false);
+            return;
+          }
+          console.log('[OneNote] Navigate via GetHyperlinkToObject succeeded');
+          resolve(true);
+        });
+      } catch (e: any) {
+        console.error('[OneNote] navigateToPage exception:', e.message);
+        resolve(false);
+      }
+    });
+  }
+
+  /**
+   * Get the onenote:// URL for a page. Uses cache first, falls back to
+   * PowerShell + COM GetHyperlinkToObject call (lazy, one-at-a-time).
+   */
+  async getPageUrl(pageId: string): Promise<string> {
+    // Check URL cache first
+    const cached = this._urlCache.get(pageId);
+    if (cached) return cached;
+
+    // Lazy fetch via PowerShell
+    return new Promise((resolve) => {
+      try {
+        const { exec } = require('child_process');
+
+        const safeId = OneNoteLocalService.sanitizeForPs(pageId);
+        const psScript =
+          'try {' +
+          `$oneNote = New-Object -ComObject OneNote.Application;` +
+          `$url = "";` +
+          `$oneNote.GetHyperlinkToObject("${safeId}", "", [ref]$url);` +
+          'if ($url) { Write-Output $url; exit 0; }' +
+          'else { exit 1; }' +
+          '} catch {' +
+          'exit 1;' +
+          '}';
+
+        const encodedScript = Buffer.from(psScript, 'utf16le').toString('base64');
+
+        exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
+          encoding: 'utf-8',
+          timeout: 10000
+        }, (error: any, stdout: string, stderr: string) => {
+          if (error || !stdout.trim()) {
+            resolve('');
+            return;
+          }
+          const url = stdout.trim();
+          this._urlCache.set(pageId, url);
+          resolve(url);
+        });
+      } catch {
+        resolve('');
+      }
+    });
+  }
+
+  /**
+   * Check if OneNote is available on the system
+   */
+  async checkOneNoteAvailability(): Promise<boolean> {
+    try {
+      if (this.isWindows) {
+        // Try to create OneNote COM object via ActiveX
+        return await this.checkWindowsOneNote();
+      } else if (this.isMac) {
+        // On Mac, check if OneNote.app exists
+        return await this.checkMacOneNote();
+      }
+      return false;
+    } catch (error: any) {
+      console.error('OneNote availability check failed:', error);
+      return false;
+    }
+  }
+
+  private async checkWindowsOneNote(): Promise<boolean> {
+    return new Promise((resolve) => {
+      try {
+        const { execSync } = require('child_process');
+
+        // Method 1: Try to find OneNote executable in common locations
+        const commonPaths = [
+          'C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE',
+          'C:\\Program Files (x86)\\Microsoft Office\\root\\Office16\\ONENOTE.EXE',
+          'C:\\Program Files\\Microsoft Office\\Office16\\ONENOTE.EXE',
+          'C:\\Program Files (x86)\\Microsoft Office\\Office16\\ONENOTE.EXE',
+          'C:\\Program Files\\Microsoft Office\\Office15\\ONENOTE.EXE',
+          'C:\\Program Files (x86)\\Microsoft Office\\Office15\\ONENOTE.EXE'
+        ];
+        
+        let found = false;
+        for (const path of commonPaths) {
+          try {
+            execSync(`if exist "${path}" echo found`, { encoding: 'utf-8' });
+            found = true;
+            break;
+          } catch (e) {
+            // Continue to next path
+          }
+        }
+        
+        if (found) {
+          resolve(true);
+          return;
+        }
+        
+        // Method 2: Try registry lookup
+        try {
+          const regOutput = execSync(
+            'reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\ONENOTE.EXE" /ve 2>nul || ' +
+            'reg query "HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\ONENOTE.EXE" /ve 2>nul',
+            { encoding: 'utf-8' }
+          );
+          if (regOutput.includes('ONENOTE.EXE')) {
+            resolve(true);
+            return;
+          }
+        } catch (e: any) {
+          // Registry check failed
+        }
+        
+        // Method 3: Try where command
+        try {
+          const output = execSync('where onenote 2>nul', { encoding: 'utf-8' });
+          if (output.trim() && output.toLowerCase().includes('onenote.exe')) {
+            resolve(true);
+            return;
+          }
+        } catch (e: any) {
+          // PATH check failed
+        }
+        
+        resolve(false);
+      } catch (error: any) {
+        console.error('Error checking Windows OneNote:', error);
+        resolve(false);
+      }
+    });
+  }
+
+  private async checkMacOneNote(): Promise<boolean> {
+    return new Promise((resolve) => {
+      try {
+        const { execSync } = require('child_process');
+        execSync('mdfind "kMDItemCFBundleIdentifier == \'com.microsoft.onenote\'"', { encoding: 'utf-8' });
+        resolve(true);
+      } catch (error) {
+        resolve(false);
+      }
+    });
+  }
+
+  /**
+   * Get all notebooks from local OneNote
+   */
+  async getNotebooks(): Promise<LocalOneNoteNotebook[]> {
+    try {
+      if (this.isWindows) {
+        return await this.getWindowsNotebooks();
+      } else if (this.isMac) {
+        return await this.getMacNotebooks();
+      }
+      return [];
+    } catch (error: any) {
+      console.error('Failed to get notebooks:', error);
+      throw new Error(`Failed to get notebooks: ${error.message}`);
+    }
+  }
+
+  private async getWindowsNotebooks(): Promise<LocalOneNoteNotebook[]> {
+    // Return cached data if still fresh
+    if (this.isCacheValid()) {
+      console.log('[OneNote] Returning cached hierarchy (age:',
+                  Math.round((Date.now() - this._cacheTimestamp) / 1000), 's)');
+      return this.hierarchyCache!;
+    }
+
+    return new Promise(async (resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        // Use hierarchy level 4 (hsPages) to get complete hierarchy including pages
+        // This is the correct level for OneNote Desktop COM API
+        // Level 4 returns all notebooks with sections and pages in one call
+        const psScript =
+          'try {' +
+          '$oneNote = New-Object -ComObject OneNote.Application;' +
+          '$xml = "";' +
+          '$oneNote.GetHierarchy("", 4, [ref]$xml);' +
+          'if ([string]::IsNullOrEmpty($xml)) { Write-Error "Empty XML"; exit 1; }' +
+          'Write-Output $xml;' +
+          '} catch {' +
+          'Write-Error $_.Exception.Message;' +
+          'exit 1;' +
+          '}';
+
+        // Encode script as Base64 to avoid escaping issues
+        const encodedScript = Buffer.from(psScript, 'utf16le').toString('base64');
+
+        // Execute using Base64 encoded command
+        exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024
+        }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            console.error('PowerShell error:', error);
+            console.error('stderr:', stderr);
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          if (!stdout || stdout.trim().length === 0) {
+            console.error('No output from PowerShell script');
+            console.error('This could mean:');
+            console.error('1. OneNote is not running');
+            console.error('2. OneNote COM object failed to initialize');
+            console.error('3. GetHierarchy returned empty data');
+            reject(new Error('No data returned from OneNote. Make sure OneNote is running and has at least one notebook.'));
+            return;
+          }
+
+          try {
+            const notebooks = parseOneNoteHierarchy(stdout);
+            // Cache the entire hierarchy
+            this.hierarchyCache = notebooks;
+            this._cacheTimestamp = Date.now();
+            resolve(notebooks);
+          } catch (parseError: any) {
+            console.error('Parse error:', parseError);
+            reject(parseError);
+          }
+        });
+      } catch (error: any) {
+        console.error('getWindowsNotebooks error:', error);
+        reject(error);
+      }
+    });
+  }
+
+  private async getMacNotebooks(): Promise<LocalOneNoteNotebook[]> {
+    return new Promise((resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        // Use AppleScript to interact with OneNote
+        const script = `
+          tell application "Microsoft OneNote"
+            set notebookList to {}
+            repeat with nb in notebooks
+              set end of notebookList to name of nb
+            end repeat
+            return notebookList as string
+          end tell
+        `;
+
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          const notebooks: LocalOneNoteNotebook[] = stdout
+            .split(',')
+            .map((name: string) => ({
+              id: name.trim(),
+              name: name.trim()
+            }))
+            .filter((n: LocalOneNoteNotebook) => n.name);
+
+          resolve(notebooks);
+        });
+      } catch (error: any) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Get sections from a specific notebook
+   */
+  async getSections(notebookId: string): Promise<LocalOneNoteSection[]> {
+    try {
+      if (this.isWindows) {
+        return await this.getWindowsSections(notebookId);
+      } else if (this.isMac) {
+        return await this.getMacSections(notebookId);
+      }
+      return [];
+    } catch (error: any) {
+      console.error('Failed to get sections:', error);
+      throw new Error(`Failed to get sections: ${error.message}`);
+    }
+  }
+
+  private async getWindowsSections(notebookId: string): Promise<LocalOneNoteSection[]> {
+    // If we have cached hierarchy, extract sections from cache
+    if (this.hierarchyCache && this.hierarchyCache.length > 0) {
+      const cachedNotebook = this.hierarchyCache.find(nb => nb.id === notebookId);
+      if (cachedNotebook && cachedNotebook.sections) {
+        return cachedNotebook.sections;
+      }
+    }
+
+    // Fallback: fetch from OneNote if cache is not available
+    return new Promise(async (resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        // Use Base64 encoding to avoid escaping issues with notebook IDs containing special characters
+        const safeId = OneNoteLocalService.sanitizeForPs(notebookId);
+        const psScript =
+          'try {' +
+          '$oneNote = New-Object -ComObject OneNote.Application;' +
+          '$xml = "";' +
+          `$oneNote.GetHierarchy("${safeId}", 1, [ref]$xml);` +
+          'if ([string]::IsNullOrEmpty($xml)) { Write-Error "Empty XML"; exit 1; }' +
+          'Write-Output $xml;' +
+          '} catch {' +
+          'Write-Error $_.Exception.Message;' +
+          'exit 1;' +
+          '}';
+
+        const encodedScript = Buffer.from(psScript, 'utf16le').toString('base64');
+
+        exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024
+        }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            console.error('PowerShell sections error:', error);
+            console.error('stderr:', stderr);
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          if (!stdout || stdout.trim().length === 0) {
+            reject(new Error('No sections data returned from OneNote.'));
+            return;
+          }
+
+          try {
+            const sections = parseOneNoteSections(stdout);
+            resolve(sections);
+          } catch (parseError: any) {
+            console.error('Parse sections error:', parseError);
+            reject(parseError);
+          }
+        });
+      } catch (error: any) {
+        console.error('getWindowsSections error:', error);
+        reject(error);
+      }
+    });
+  }
+
+  private async getMacSections(notebookId: string): Promise<LocalOneNoteSection[]> {
+    return new Promise((resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        const script = `
+          tell application "Microsoft OneNote"
+            set nb to notebook "${notebookId}"
+            set sectionList to {}
+            repeat with s in sections of nb
+              set end of sectionList to name of s
+            end repeat
+            return sectionList as string
+          end tell
+        `;
+
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          const sections: LocalOneNoteSection[] = stdout
+            .split(',')
+            .map((name: string) => ({
+              id: name.trim(),
+              name: name.trim(),
+              notebookId: notebookId
+            }))
+            .filter((s: LocalOneNoteSection) => s.name);
+
+          resolve(sections);
+        });
+      } catch (error: any) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Get pages from a specific section
+   */
+  async getPages(sectionId: string): Promise<LocalOneNotePage[]> {
+    try {
+      if (this.isWindows) {
+        return await this.getWindowsPages(sectionId);
+      } else if (this.isMac) {
+        return await this.getMacPages(sectionId);
+      }
+      return [];
+    } catch (error: any) {
+      console.error('Failed to get pages:', error);
+      throw new Error(`Failed to get pages: ${error.message}`);
+    }
+  }
+
+  private async getWindowsPages(sectionId: string): Promise<LocalOneNotePage[]> {
+    // If we have cached hierarchy, extract pages from cache
+    if (this.hierarchyCache && this.hierarchyCache.length > 0) {
+      for (const notebook of this.hierarchyCache) {
+        if (notebook.sections) {
+          const targetSection = notebook.sections.find(s => s.id === sectionId);
+          if (targetSection && targetSection.pages) {
+            return targetSection.pages;
+          }
+        }
+      }
+    }
+
+    // Fallback: fetch from OneNote if cache is not available
+    return new Promise(async (resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        // Use hierarchy level 4 (hsPages) to get complete hierarchy
+        const psScript =
+          'try {' +
+          '$oneNote = New-Object -ComObject OneNote.Application;' +
+          '$xml = "";' +
+          '$oneNote.GetHierarchy("", 4, [ref]$xml);' +
+          'if ([string]::IsNullOrEmpty($xml)) { Write-Error "Empty XML"; exit 1; }' +
+          'Write-Output $xml;' +
+          '} catch {' +
+          'Write-Error $_.Exception.Message;' +
+          'exit 1;' +
+          '}';
+
+        const encodedScript = Buffer.from(psScript, 'utf16le').toString('base64');
+
+        exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024
+        }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            console.error('PowerShell pages error:', error);
+            console.error('stderr:', stderr);
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          if (!stdout || stdout.trim().length === 0) {
+            reject(new Error('No pages data returned from OneNote.'));
+            return;
+          }
+
+          try {
+            const notebooks = parseOneNoteHierarchy(stdout);
+            this.hierarchyCache = notebooks;
+            this._cacheTimestamp = Date.now();
+            
+            // Find the section and extract pages
+            for (const notebook of notebooks) {
+              if (notebook.sections) {
+                const targetSection = notebook.sections.find(s => s.id === sectionId);
+                if (targetSection && targetSection.pages) {
+                  resolve(targetSection.pages);
+                  return;
+                }
+              }
+            }
+            
+            resolve([]);
+          } catch (parseError: any) {
+            console.error('Parse pages error:', parseError);
+            reject(parseError);
+          }
+        });
+      } catch (error: any) {
+        console.error('getWindowsPages error:', error);
+        reject(error);
+      }
+    });
+  }
+
+  private async getMacPages(sectionId: string): Promise<LocalOneNotePage[]> {
+    return new Promise((resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        const script = `
+          tell application "Microsoft OneNote"
+            set s to section "${sectionId}"
+            set pageList to {}
+            repeat with p in pages of s
+              set end of pageList to name of p
+            end repeat
+            return pageList as string
+          end tell
+        `;
+
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          const pages: LocalOneNotePage[] = stdout
+            .split(',')
+            .map((name: string) => ({
+              id: name.trim(),
+              title: name.trim(),
+              sectionId: sectionId
+            }))
+            .filter((p: LocalOneNotePage) => p.title);
+
+          resolve(pages);
+        });
+      } catch (error: any) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Get page content as HTML
+   */
+  async getPageContent(pageId: string): Promise<string> {
+    try {
+      if (this.isWindows) {
+        return await this.getWindowsPageContent(pageId);
+      } else if (this.isMac) {
+        return await this.getMacPageContent(pageId);
+      }
+      return '';
+    } catch (error: any) {
+      console.error('Failed to get page content:', error);
+      throw new Error(`Failed to get page content: ${error.message}`);
+    }
+  }
+
+  private _lastPageUrl: string = '';
+  private _lastPageImage: string = '';
+
+  getLastPageUrl(): string {
+    return this._lastPageUrl;
+  }
+
+  getLastPageImage(): string {
+    return this._lastPageImage;
+  }
+
+  /** Helper: get the path to the C++ helper binary. */
+  private getExePath(): string {
+    return this._pluginDir + '/onenote-repos.exe';
+  }
+
+  /** Helper: run the C++ binary with the given subcommand and return stdout. */
+  private runExe(args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const exePath = this.getExePath();
+      console.log('[OneNote C++] exec:', exePath, args.join(' '));
+      try {
+        const { execFile } = require('child_process');
+        execFile(exePath, args, {
+          encoding: 'utf-8',
+          maxBuffer: 1024 * 1024,
+          windowsHide: true
+        }, (error: any, stdout: string, stderr: string) => {
+          const output = (stdout || '').trim();
+          console.log('[OneNote C++] stdout:', output);
+          if (stderr) console.error('[OneNote C++] stderr:', stderr.trim());
+          if (error) {
+            console.error('[OneNote C++] exec error:', error.message, 'code:', error.code);
+          }
+          if (output.startsWith('ERR:')) {
+            reject(new Error(output.substring(4)));
+          } else if (error) {
+            reject(new Error(error.message));
+          } else {
+            resolve(output);
+          }
+        });
+      } catch (error: any) {
+        console.error('[OneNote C++] spawn error:', error);
+        reject(error);
+      }
+    });
+  }
+
+  /** Find the OneNote window HWND using repos.exe find-window command.
+   *  Retries up to 15 times with 500ms delay — OneNote's CFrame window
+   *  may not exist immediately after NavigateTo. */
+  async findOneNoteWindowHwnd(): Promise<string> {
+    const maxRetries = 15;
+    const retryDelayMs = 500;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const output = await this.runExe(['find-window']);
+        if (output.startsWith('OK:')) {
+          return output.substring(3);
+        }
+      } catch (e: any) {
+        lastError = e;
+      }
+      if (attempt < maxRetries) {
+        await new Promise(r => setTimeout(r, retryDelayMs));
+      }
+    }
+    throw lastError ?? new Error('OneNote window not found after ' + maxRetries + ' attempts');
+  }
+
+  /**
+   * Get Obsidian's main window handle for z-order reference.
+   * Uses Electron's remote.getCurrentWindow() to get the native window handle.
+   */
+  getObsidianWindowHwnd(): string | null {
+    try {
+      const electron = require('electron');
+      // In Obsidian's renderer, remote.getCurrentWindow() gives access to the host window
+      const win = electron.remote?.getCurrentWindow?.();
+      if (win) {
+        const hwnd = win.getNativeWindowHandle();
+        // Windows returns a Buffer with little-endian HWND
+        if (hwnd && hwnd.length >= 4) {
+          const handle = hwnd.readUInt32LE(0);
+          return handle.toString();
+        }
+      }
+
+      console.warn('[OneNote] Could not get Obsidian window handle via electron.remote');
+      return null;
+    } catch (e) {
+      console.warn('[OneNote] Error getting Obsidian window handle:', e);
+      return null;
+    }
+  }
+
+  /**
+   * Embed the OneNote window using the new win-embed.exe flow:
+   *   1. Navigate OneNote to the page via COM (repos.exe navigate)
+   *   2. Find the OneNote window HWND (repos.exe find-window)
+   *   3. Embed that HWND (win-embed.exe embed <hwnd>)
+   *
+   * Returns the OneNote HWND for tracking.
+   */
+  async embedOneNoteWindow(pageId: string): Promise<string> {
+    if (!this._embedManager) {
+      throw new Error('Plugin directory not set — call setPluginDir() first');
+    }
+
+    // Step 1: Navigate OneNote to the target page via COM.
+    // If OneNote is not yet running, the COM call may fail — retry a few times
+    // to give OneNote time to start up.
+    let navigated = false;
+    const maxNavRetries = 3;
+    for (let i = 1; i <= maxNavRetries; i++) {
+      navigated = await this.navigateToPage(pageId);
+      if (navigated) break;
+      if (i < maxNavRetries) {
+        console.log(`[OneNote Embed] Navigate attempt ${i} failed, retrying in 2s...`);
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    if (!navigated) {
+      throw new Error('Failed to navigate OneNote to page — make sure OneNote is running');
+    }
+
+    // Brief pause for OneNote to finish navigating and create its CFrame window
+    await new Promise(r => setTimeout(r, 500));
+
+    // Step 2: Find the OneNote window HWND
+    const hwnd = await this.findOneNoteWindowHwnd();
+    console.log('[OneNote Embed] Found OneNote HWND:', hwnd);
+
+    // Get Obsidian window handle for z-order reference
+    const obsHwnd = this.getObsidianWindowHwnd();
+    if (obsHwnd) {
+      console.log('[OneNote Embed] Using Obsidian HWND:', obsHwnd, 'for z-order');
+    }
+
+    // Step 3: Embed the window via win-embed.exe
+    const resultHwnd = await this._embedManager.embedWindow(hwnd, obsHwnd || undefined);
+    console.log('[OneNote Embed] Embedded window HWND:', resultHwnd);
+    return resultHwnd;
+  }
+
+  /**
+   * Reparent the embedded OneNote window into Obsidian's main window.
+   * Delegates to WindowEmbedManager which sends REPARENT via stdin.
+   */
+  async reparentOneNoteWindow(hostHwnd?: string): Promise<void> {
+    if (!this._embedManager?.isRunning()) return;
+    try {
+      await this._embedManager.reparent(hostHwnd);
+      console.log('[OneNote Embed] REPARENT completed');
+    } catch (e: any) {
+      console.warn('[OneNote Embed] REPARENT failed:', e.message);
+    }
+  }
+
+  /**
+   * Reposition the embedded OneNote window to match a DOM container's position.
+   * Delegates to WindowEmbedManager which writes coordinates to stdin.
+   */
+  async repositionOneNoteWindow(x: number, y: number, width: number, height: number): Promise<void> {
+    if (!this._embedManager?.isRunning()) return;
+    await this._embedManager.reposition(x, y, width, height);
+  }
+
+  /**
+   * Detach the embedded OneNote window back to a standalone window.
+   * Delegates to WindowEmbedManager which sends EXIT and waits for cleanup.
+   */
+  async detachOneNoteWindow(): Promise<void> {
+    if (!this._embedManager?.isRunning()) return;
+    console.log('[OneNote Embed] Detaching embedded window');
+    await this._embedManager.detach();
+    this._embedSession.reset();
+  }
+
+  /**
+   * Stop the embed process immediately (force kill after graceful attempt).
+   */
+  private stopEmbedProcess(): void {
+    if (this._embedManager) {
+      this._embedManager.stop();
+    }
+    this._embedSession.reset();
+  }
+
+  /**
+   * Quit OneNote application entirely using the C++ helper.
+   * If a window is embedded, it will be detached first.
+   */
+  async quitOneNote(): Promise<void> {
+    // Stop embed process first (destroys overlay, detaches OneNote)
+    this.stopEmbedProcess();
+    try {
+      await this.runExe(['quit']);
+      console.log('[OneNote Embed] Quit completed');
+    } catch (e: any) {
+      console.warn('[OneNote Embed] Quit error:', e.message);
+    }
+  }
+
+  private async getWindowsPageContent(pageId: string): Promise<string> {
+    return new Promise(async (resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        // PowerShell: get URL + XML content
+        const safeId = OneNoteLocalService.sanitizeForPs(pageId);
+        const psScript =
+          '$one = New-Object -ComObject OneNote.Application;' +
+          '$url = "";' +
+          'try {' +
+          `  $one.GetHyperlinkToObject("${safeId}", "", [ref]$url);` +
+          '} catch {};' +
+          'Write-Output ("URL:" + $url);' +
+          '$xml = "";' +
+          `  $one.GetPageContent("${safeId}", [ref]$xml, 7);` +
+          'Write-Output $xml';
+
+        const encodedScript = Buffer.from(psScript, 'utf16le').toString('base64');
+
+        exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
+          encoding: 'utf-8',
+          maxBuffer: 10 * 1024 * 1024
+        }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            console.error('PowerShell error:', error);
+            console.error('stderr:', stderr);
+            reject(new Error(stderr || error.message));
+            return;
+          }
+
+          if (!stdout || stdout.trim().length === 0) {
+            reject(new Error('No content returned from OneNote.'));
+            return;
+          }
+
+          // Parse: first line is "URL:<url>", rest is XML
+          const firstNewline = stdout.indexOf('\n');
+          const firstLine = firstNewline >= 0 ? stdout.substring(0, firstNewline).trim() : stdout.trim();
+          const xmlContent = firstNewline >= 0 ? stdout.substring(firstNewline + 1) : '';
+
+          let pageUrl = '';
+          if (firstLine.startsWith('URL:')) {
+            pageUrl = firstLine.substring(4).trim();
+          }
+          this._lastPageUrl = pageUrl;
+          this._lastPageImage = '';
+
+          if (!xmlContent || xmlContent.trim().length === 0) {
+            reject(new Error('No XML content returned from OneNote.'));
+            return;
+          }
+
+          const html = parseOneNotePageXml(xmlContent);
+          resolve(html);
+        });
+      } catch (error: any) {
+        console.error('getWindowsPageContent error:', error);
+        reject(error);
+      }
+    });
+  }
+
+  private async getMacPageContent(pageId: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      try {
+        const { exec } = require('child_process');
+
+        const script = `
+          tell application "Microsoft OneNote"
+            set p to page "${pageId}"
+            return content of p
+          end tell
+        `;
+
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }, (error: any, stdout: string, stderr: string) => {
+          if (error) {
+            reject(new Error(stderr || error.message));
+            return;
+          }
+          resolve(stdout);
+        });
+      } catch (error: any) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Open page in OneNote application
+   */
+  async openPageInOneNote(pageId: string): Promise<boolean> {
+    try {
+      if (this.isWindows) {
+        const { execFile } = require('child_process');
+        execFile('cmd.exe', ['/c', 'start', '', `onenote:${pageId}`], {
+          windowsHide: true
+        });
+        return true;
+      } else if (this.isMac) {
+        const { exec } = require('child_process');
+        exec(`open -a "Microsoft OneNote" "onenote:${pageId}"`);
+        return true;
+      }
+      return false;
+    } catch (error: any) {
+      console.error('Failed to open page in OneNote:', error);
+      new Notice(`Failed to open OneNote: ${error.message}`);
+      return false;
+    }
+  }
+
+  async openOneNoteApp(): Promise<boolean> {
+    try {
+      if (this.isWindows) {
+        const { execFile } = require('child_process');
+        execFile('cmd.exe', ['/c', 'start', '', 'onenote:'], {
+          windowsHide: true
+        });
+        return true;
+      } else if (this.isMac) {
+        const { exec } = require('child_process');
+        exec('open -a "Microsoft OneNote"');
+        return true;
+      }
+      return false;
+    } catch (error: any) {
+      console.error('Failed to open OneNote app:', error);
+      new Notice(`Failed to open OneNote: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Get platform information
+   */
+  getPlatformInfo(): { platform: string; hasOneNote: boolean } {
+    let platform = 'unknown';
+    if (this.isWindows) platform = 'windows';
+    else if (this.isMac) platform = 'mac';
+
+    return {
+      platform,
+      hasOneNote: this.isWindows || this.isMac
+    };
+  }
+}

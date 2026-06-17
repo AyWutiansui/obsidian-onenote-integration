@@ -1,0 +1,31 @@
+{
+  "name": "obsidian-onenote-integration",
+  "version": "1.0.0",
+  "description": "Embed and edit OneNote notes in Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && node -e \"require('fs').copyFileSync('onenote-repos.exe','../test-vault/.obsidian/plugins/obsidian-onenote-integration/onenote-repos.exe'); require('fs').copyFileSync('win-embed-overlay.exe','../test-vault/.obsidian/plugins/obsidian-onenote-integration/win-embed-overlay.exe')\"",
+    "watch": "node esbuild.config.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "obsidian",
+    "onenote",
+    "plugin"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.19.0",
+    "esbuild-plugin-copy": "^2.1.0",
+    "jsdom": "^29.1.1",
+    "obsidian": "latest",
+    "tslib": "^2.6.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.9"
+  }
+}
