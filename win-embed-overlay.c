@@ -216,13 +216,6 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
     SetWindowLong(targetHwnd, GWL_STYLE, newStyle);
     SetWindowPos(targetHwnd, NULL, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-
-    /* Force OneNote to recalculate its internal layout for the new frameless style.
-     * Without WM_SIZE, OneNote's rendering area stays at the old (framed) dimensions
-     * even though the outer window size is correct. This is why manual resize after
-     * detach "fixes" the issue — it triggers WM_SIZE naturally. */
-    PostMessage(targetHwnd, WM_SIZE, SIZE_RESTORED, 0);
-
     ShowWindow(targetHwnd, SW_SHOW);
     return 0;  /* 0 = position-only mode (not an error) */
 }
@@ -278,9 +271,22 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
     } else {
         /* Position-only mode: move target directly to screen coords */
         if (targetHwnd && IsWindow(targetHwnd)) {
-            UINT flags = SWP_NOACTIVATE | SWP_NOZORDER;
-            if (g_lastW == 0) flags |= SWP_SHOWWINDOW;
-            SetWindowPos(targetHwnd, NULL, x, y, w, h, flags);
+            if (g_lastW == 0) {
+                /* First reposition after reparent: force OneNote to recalculate
+                 * its internal layout for the frameless window. OneNote's layout
+                 * engine doesn't react to SWP_FRAMECHANGED alone — it needs a real
+                 * WM_SIZE with non-zero dimensions. We do a two-step resize:
+                 * first to 1x1 (guarantees size change), then to target size.
+                 * This is equivalent to the "manual resize" that fixes the issue. */
+                ShowWindow(targetHwnd, SW_SHOW);
+                SetWindowPos(targetHwnd, NULL, x, y, 1, 1,
+                             SWP_NOACTIVATE | SWP_NOZORDER);
+                SetWindowPos(targetHwnd, NULL, x, y, w, h,
+                             SWP_NOACTIVATE | SWP_NOZORDER);
+            } else {
+                UINT flags = SWP_NOACTIVATE | SWP_NOZORDER;
+                SetWindowPos(targetHwnd, NULL, x, y, w, h, flags);
+            }
             g_lastW = w;
             g_lastH = h;
         }
