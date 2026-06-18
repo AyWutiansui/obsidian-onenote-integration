@@ -17,18 +17,22 @@ class MockResizeObserver {
 
 describe('calculateChromeOffset', () => {
   beforeEach(() => {
-    // Reset window properties
+    // Reset window properties — default to windowed mode
     Object.defineProperty(window, 'screenX', { value: 0, writable: true, configurable: true });
     Object.defineProperty(window, 'screenY', { value: 0, writable: true, configurable: true });
     Object.defineProperty(window, 'outerHeight', { value: 800, writable: true, configurable: true });
     Object.defineProperty(window, 'innerHeight', { value: 700, writable: true, configurable: true });
+    Object.defineProperty(window, 'outerWidth', { value: 1200, writable: true, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 1180, writable: true, configurable: true });
   });
 
-  it('returns offset based on screenX/Y and chrome height when Electron API unavailable', () => {
+  it('returns offset based on screenX/Y and chrome height for windowed mode', () => {
     Object.defineProperty(window, 'screenX', { value: 100, writable: true, configurable: true });
     Object.defineProperty(window, 'screenY', { value: 50, writable: true, configurable: true });
     Object.defineProperty(window, 'outerHeight', { value: 800, writable: true, configurable: true });
     Object.defineProperty(window, 'innerHeight', { value: 700, writable: true, configurable: true });
+    Object.defineProperty(window, 'outerWidth', { value: 1200, writable: true, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 1180, writable: true, configurable: true });
 
     const offset = calculateChromeOffset();
     expect(offset.x).toBe(100);
@@ -36,32 +40,31 @@ describe('calculateChromeOffset', () => {
     expect(offset.y).toBe(150);
   });
 
-  it('uses Electron getContentBounds when available', () => {
-    // Mock electron module
-    const mockBounds = { x: 200, y: 150, width: 1024, height: 768 };
-    const mockWin = { getContentBounds: () => mockBounds };
-    vi.doMock('electron', () => ({
-      remote: { getCurrentWindow: () => mockWin },
-    }));
+  it('returns availLeft/availTop for maximized window', () => {
+    // Maximized: outerHeight === innerHeight AND outerWidth === innerWidth
+    Object.defineProperty(window, 'outerHeight', { value: 1080, writable: true, configurable: true });
+    Object.defineProperty(window, 'innerHeight', { value: 1080, writable: true, configurable: true });
+    Object.defineProperty(window, 'outerWidth', { value: 1920, writable: true, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 1920, writable: true, configurable: true });
+    Object.defineProperty(window, 'screen', {
+      value: { availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1080 },
+      writable: true, configurable: true,
+    });
 
-    // Need to re-import after mock
-    // Since calculateChromeOffset uses require('electron') internally,
-    // the vi.doMock should work with the require call
     const offset = calculateChromeOffset();
-
-    // The fallback should still work because jsdom's require may not resolve electron
-    // This test verifies the function doesn't crash
-    expect(typeof offset.x).toBe('number');
-    expect(typeof offset.y).toBe('number');
-
-    vi.doUnmock('electron');
+    expect(offset.x).toBe(0);
+    expect(offset.y).toBe(0);
   });
 
-  it('handles zero outerHeight/innerHeight difference', () => {
-    Object.defineProperty(window, 'screenX', { value: 0, writable: true, configurable: true });
-    Object.defineProperty(window, 'screenY', { value: 0, writable: true, configurable: true });
+  it('handles zero outerHeight/innerHeight difference as maximized', () => {
     Object.defineProperty(window, 'outerHeight', { value: 600, writable: true, configurable: true });
     Object.defineProperty(window, 'innerHeight', { value: 600, writable: true, configurable: true });
+    Object.defineProperty(window, 'outerWidth', { value: 800, writable: true, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 800, writable: true, configurable: true });
+    Object.defineProperty(window, 'screen', {
+      value: { availLeft: 0, availTop: 0, availWidth: 800, availHeight: 600 },
+      writable: true, configurable: true,
+    });
 
     const offset = calculateChromeOffset();
     expect(offset.x).toBe(0);
@@ -91,13 +94,18 @@ describe('CoordinateTracker', () => {
       // Don't actually remove — we're just tracking
     });
 
-    // Set up window dimensions
+    // Set up window dimensions — windowed mode (not maximized)
     Object.defineProperty(window, 'screenX', { value: 0, writable: true, configurable: true });
     Object.defineProperty(window, 'screenY', { value: 0, writable: true, configurable: true });
     Object.defineProperty(window, 'outerHeight', { value: 800, writable: true, configurable: true });
     Object.defineProperty(window, 'innerHeight', { value: 700, writable: true, configurable: true });
-    Object.defineProperty(window, 'innerWidth', { value: 1024, writable: true, configurable: true });
+    Object.defineProperty(window, 'innerWidth', { value: 1000, writable: true, configurable: true });
+    Object.defineProperty(window, 'outerWidth', { value: 1020, writable: true, configurable: true });
     Object.defineProperty(window, 'devicePixelRatio', { value: 1, writable: true, configurable: true });
+    Object.defineProperty(window, 'screen', {
+      value: { availLeft: 0, availTop: 0, availWidth: 1920, availHeight: 1080 },
+      writable: true, configurable: true,
+    });
 
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -240,10 +248,12 @@ describe('CoordinateTracker', () => {
     const tracker = new CoordinateTracker(container, callback);
 
     // rect: left=100, top=200, width=400 → physical: 150, 300, 600
-    // embedHeight = max(400, min(1200, round(400*2/3*1.5))) = max(400, min(1200, 400)) = 400
-    // y = physTop + offset.y = 300 + 100 = 400
-    // screen bottom = 0 + 700*1.5 = 1050, oneNoteBottom = 400+400 = 800 < 1050 ✓
-    expect(callback).toHaveBeenCalledWith(150, 400, 600, 400);
+    // embedHeightCss = max(400, min(1200, round(400*2/3))) = max(400, 267) = 400
+    // embedHeight = round(400 * 1.5) = 600
+    // offset.y = round((screenY + chromeH) * dpr) = round((0 + 100) * 1.5) = 150
+    // y = physTop + offset.y = 300 + 150 = 450
+    // screen bottom = 0 + 700*1.5 = 1050, oneNoteBottom = 450+600 = 1050 ≤ 1050 ✓
+    expect(callback).toHaveBeenCalledWith(150, 450, 600, 600);
 
     tracker.dispose();
   });
@@ -259,10 +269,12 @@ describe('CoordinateTracker', () => {
     const tracker = new CoordinateTracker(container, callback);
 
     // rect: left=100, top=200, width=400 → physical: 200, 400, 800
-    // embedHeight = max(400, min(1200, round(400*2/3*2))) = max(400, min(1200, 533)) = 533
-    // y = physTop + offset.y = 400 + 100 = 500
-    // screen bottom = 0 + 700*2 = 1400, oneNoteBottom = 500+533 = 1033 < 1400 ✓
-    expect(callback).toHaveBeenCalledWith(200, 500, 800, 533);
+    // embedHeightCss = max(400, min(1200, round(400*2/3))) = max(400, 267) = 400
+    // embedHeight = round(400 * 2) = 800
+    // offset.y = round((screenY + chromeH) * dpr) = round((0 + 100) * 2) = 200
+    // y = physTop + offset.y = 400 + 200 = 600
+    // screen bottom = 0 + 700*2 = 1400, oneNoteBottom = 600+800 = 1400 ≤ 1400 ✓
+    expect(callback).toHaveBeenCalledWith(200, 600, 800, 800);
 
     tracker.dispose();
   });
@@ -283,9 +295,9 @@ describe('CoordinateTracker', () => {
     Object.defineProperty(window, 'devicePixelRatio', { value: 2, writable: true, configurable: true });
     tracker.update();
 
-    // Should fire again with new physical pixel values
+    // Should fire again with new physical pixel values (including offset recalculation)
     expect(callback).toHaveBeenCalledTimes(2);
-    expect(callback).toHaveBeenLastCalledWith(200, 500, 800, 533);
+    expect(callback).toHaveBeenLastCalledWith(200, 600, 800, 800);
 
     tracker.dispose();
   });
