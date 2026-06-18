@@ -18,11 +18,18 @@ export const ONE_NOTE_VIEW_TYPE = 'onenote-embed-view';
 export default class OneNoteIntegrationPlugin extends Plugin {
   settings!: OneNotePluginSettings;
   localOneNoteService: OneNoteLocalService | null = null;
+  private statusBarEl: HTMLElement | null = null;
 
   async onload() {
     console.log('Loading OneNote Integration plugin');
 
     await this.loadSettings();
+
+    // Status bar item
+    this.statusBarEl = this.addStatusBarItem();
+    this.statusBarEl.setText('OneNote: checking...');
+    this.statusBarEl.setAttribute('aria-label', 'OneNote connection status');
+    this.updateOneNoteStatus();
 
     // Register view type
     this.registerView(
@@ -95,6 +102,7 @@ export default class OneNoteIntegrationPlugin extends Plugin {
 
   onunload() {
     this.app.workspace.detachLeavesOfType(ONE_NOTE_VIEW_TYPE);
+    this.statusBarEl = null;
     // Release embedded OneNote window on plugin unload
     if (this.localOneNoteService) {
       // Try async detach, but force kill if it doesn't complete quickly
@@ -154,6 +162,20 @@ export default class OneNoteIntegrationPlugin extends Plugin {
     const embedBlock = `\`\`\`onenote\n\`\`\`\n`;
     editor.replaceRange(embedBlock, cursor);
     editor.setCursor(cursor.line + 1, 0);
+  }
+
+  async updateOneNoteStatus() {
+    if (!this.statusBarEl) return;
+    try {
+      const available = await this.localOneNoteService?.checkOneNoteAvailability();
+      if (available) {
+        this.statusBarEl.setText('OneNote: connected');
+      } else {
+        this.statusBarEl.setText('OneNote: not found');
+      }
+    } catch {
+      this.statusBarEl.setText('OneNote: error');
+    }
   }
 }
 

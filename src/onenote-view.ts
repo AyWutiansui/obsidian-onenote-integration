@@ -58,6 +58,7 @@ export class OneNoteEmbedView extends ItemView {
           svc.invalidateCache();
           console.log('[OneNote] Hierarchy cache invalidated');
         }
+        this.plugin.updateOneNoteStatus();
         await this.loadNotebooks(this.contentDiv!);
       });
 
@@ -277,7 +278,6 @@ export class OneNoteEmbedView extends ItemView {
     // Access cached hierarchy via getNotebooks (returns from cache if fresh)
     service.getNotebooks().then(notebooks => {
       container.empty();
-      container.createEl('h3', { text: `Search results for "${query.trim()}"${scopeLabel}` });
 
       let resultCount = 0;
       const resultsDiv = container.createDiv({ cls: 'onenote-search-results' });
@@ -329,6 +329,13 @@ export class OneNoteEmbedView extends ItemView {
           }
         }
       }
+
+      // Insert heading with result count before results
+      const heading = container.createEl('h3');
+      heading.textContent = resultCount > 0
+        ? `${resultCount} result${resultCount === 1 ? '' : 's'} for "${query.trim()}"${scopeLabel}`
+        : `No results for "${query.trim()}"${scopeLabel}`;
+      container.insertBefore(heading, resultsDiv);
 
       if (resultCount === 0) {
         const noResult = container.createDiv({ cls: 'onenote-info-message' });
@@ -719,10 +726,18 @@ td,th{border-color:#444}
         });
       }
     } catch (error: any) {
-      container.createEl('div', {
-        cls: 'onenote-error-message',
-        text: `Error loading page content: ${error.message}`
-      });
+      const errDiv = container.createDiv({ cls: 'onenote-error-message' });
+      const errIcon = errDiv.createSpan({ cls: 'onenote-item-icon' });
+      setIcon(errIcon, 'alert-circle');
+      errDiv.createSpan({ text: `Error loading page content: ${error.message}` });
+
+      new ButtonComponent(errDiv)
+        .setIcon('refresh-cw')
+        .setButtonText('Retry')
+        .setClass('mod-cta')
+        .onClick(async () => {
+          await this.displayPage(page, container);
+        });
     }
   }
 
