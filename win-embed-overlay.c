@@ -273,19 +273,30 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
         if (targetHwnd && IsWindow(targetHwnd)) {
             if (g_lastW == 0) {
                 /* First reposition after reparent: force OneNote to recalculate
-                 * its internal layout for the frameless window. OneNote's layout
-                 * engine doesn't react to SWP_FRAMECHANGED alone — it needs a real
-                 * WM_SIZE with non-zero dimensions. We do a two-step resize:
-                 * first to 1x1 (guarantees size change), then to target size.
-                 * This is equivalent to the "manual resize" that fixes the issue. */
+                 * its layout for the frameless window.
+                 *
+                 * After frame stripping (SWP_FRAMECHANGED → WM_NCCALCSIZE), the
+                 * non-client area becomes 0, but OneNote's internal layout engine
+                 * doesn't react until it receives WM_SIZE with real dimensions.
+                 *
+                 * SendMessage delivers WM_SIZE synchronously — OneNote processes
+                 * it immediately, unlike PostMessage which queues it. This avoids
+                 * the visual flicker of a two-step resize (1x1 → target).
+                 *
+                 * After SendMessage(WM_SIZE), OneNote's client area is correct.
+                 * SetWindowPos below only moves the window to (x,y) — the size
+                 * is already right, so no redundant WM_SIZE is generated. */
+                SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
+                            MAKELPARAM(w, h));
                 ShowWindow(targetHwnd, SW_SHOW);
-                SetWindowPos(targetHwnd, NULL, x, y, 1, 1,
+                SetWindowPos(targetHwnd, NULL, x, y, w, h,
                              SWP_NOACTIVATE | SWP_NOZORDER);
+            } else if (w != g_lastW || h != g_lastH) {
                 SetWindowPos(targetHwnd, NULL, x, y, w, h,
                              SWP_NOACTIVATE | SWP_NOZORDER);
             } else {
-                UINT flags = SWP_NOACTIVATE | SWP_NOZORDER;
-                SetWindowPos(targetHwnd, NULL, x, y, w, h, flags);
+                SetWindowPos(targetHwnd, NULL, x, y, w, h,
+                             SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE);
             }
             g_lastW = w;
             g_lastH = h;
