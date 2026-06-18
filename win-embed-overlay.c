@@ -36,7 +36,64 @@ static HWND     g_savedOneNoteParent  = NULL;
 static LONG     g_savedStyle          = 0;
 static LONG     g_savedExStyle        = 0;
 static int      g_isReparented        = 0;
+static int      g_lastW               = 0;
+static int      g_lastH               = 0;
 static HINSTANCE g_hInst              = NULL;
+
+/* ── Thread-safe command queue (reader thread → main thread) ──── */
+
+#define CMD_QUEUE_SIZE 64
+#define CMD_MAX_LEN    256
+
+static char         g_cmdQueue[CMD_QUEUE_SIZE][CMD_MAX_LEN];
+static int          g_cmdHead = 0;
+static int          g_cmdTail = 0;
+static CRITICAL_SECTION g_cmdMutex;
+static HANDLE       g_stdinEvent  = NULL;
+static volatile int g_running     = 1;
+
+static int cmdQueuePush(const char *cmd) {
+    int next;
+    EnterCriticalSection(&g_cmdMutex);
+    next = (g_cmdHead + 1) % CMD_QUEUE_SIZE;
+    if (next == g_cmdTail) {
+        LeaveCriticalSection(&g_cmdMutex);
+        return 0;  /* queue full */
+    }
+    strncpy(g_cmdQueue[g_cmdHead], cmd, CMD_MAX_LEN - 1);
+    g_cmdQueue[g_cmdHead][CMD_MAX_LEN - 1] = '\0';
+    g_cmdHead = next;
+    LeaveCriticalSection(&g_cmdMutex);
+    return 1;
+}
+
+static int cmdQueuePop(char *out) {
+    int empty;
+    EnterCriticalSection(&g_cmdMutex);
+    empty = (g_cmdTail == g_cmdHead);
+    if (!empty) {
+        memcpy(out, g_cmdQueue[g_cmdTail], CMD_MAX_LEN);
+        g_cmdTail = (g_cmdTail + 1) % CMD_QUEUE_SIZE;
+    }
+    LeaveCriticalSection(&g_cmdMutex);
+    return !empty;
+}
+
+/* Reader thread: blocks on fgets(stdin), pushes commands to queue,
+ * signals event so main thread wakes via MsgWaitForMultipleObjects. */
+static DWORD WINAPI stdinReaderThread(LPVOID param) {
+    char buf[CMD_MAX_LEN];
+    (void)param;
+    while (g_running && fgets(buf, sizeof(buf), stdin)) {
+        buf[strcspn(buf, "\r\n")] = '\0';
+        cmdQueuePush(buf);
+        SetEvent(g_stdinEvent);
+    }
+    /* stdin closed or g_running stopped — signal main thread to exit */
+    g_running = 0;
+    SetEvent(g_stdinEvent);
+    return 0;
+}
 
 static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg,
     WPARAM wParam, LPARAM lParam)
@@ -168,6 +225,8 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
 static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
     if (x < -5000) {
         /* Hide: move everything off-screen */
+        g_lastW = 0;
+        g_lastH = 0;
         if (g_isReparented && g_overlayHwnd && IsWindow(g_overlayHwnd)) {
             SetWindowPos(g_overlayHwnd, NULL, -32000, -32000, 1, 1,
                          SWP_NOACTIVATE | SWP_NOZORDER);
@@ -178,15 +237,32 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
         return;
     }
 
-    fprintf(stderr, "REPOSITION: (%d, %d) %dx%d reparented=%d\n",
-            x, y, w, h, g_isReparented);
-
     if (g_isReparented) {
-        /* Reparent mode: overlay + target at (0,0) inside overlay */
+        /* Reparent mode: move overlay (in-process).
+         * Only resize target child when w/h actually change — avoids
+         * expensive cross-process SetWindowPos to ONENOTE.EXE on every scroll. */
         if (!g_overlayHwnd || !IsWindow(g_overlayHwnd)) return;
-        SetWindowPos(g_overlayHwnd, HWND_TOP, x, y, w, h, SWP_SHOWWINDOW);
-        if (targetHwnd && IsWindow(targetHwnd)) {
-            SetWindowPos(targetHwnd, HWND_TOP, 0, 0, w, h, SWP_NOACTIVATE);
+
+        UINT flags = SWP_NOACTIVATE;
+        if (g_lastW == 0) {
+            /* First call: show window and set z-order */
+            flags |= SWP_SHOWWINDOW;
+        } else {
+            /* Subsequent calls: skip show + z-order (already set) */
+            flags |= SWP_NOZORDER;
+        }
+        if (w == g_lastW && h == g_lastH && g_lastW != 0) {
+            flags |= SWP_NOSIZE;
+            SetWindowPos(g_overlayHwnd, NULL, x, y, 0, 0, flags);
+        } else {
+            SetWindowPos(g_overlayHwnd, HWND_TOP, x, y, w, h, flags);
+        }
+        if (w != g_lastW || h != g_lastH) {
+            if (targetHwnd && IsWindow(targetHwnd)) {
+                SetWindowPos(targetHwnd, HWND_TOP, 0, 0, w, h, SWP_NOACTIVATE);
+            }
+            g_lastW = w;
+            g_lastH = h;
         }
     } else {
         /* Position-only mode: move target directly to screen coords */
@@ -284,9 +360,6 @@ static HWND parseHwnd(const char *s) {
 
 static int cmd_embed(int argc, char *argv[]) {
     HWND targetHwnd;
-    int running = 1;
-    char buf[256];
-    int x, y, w, h;
 
     if (argc < 3) {
         fprintf(stderr, "embed: hwnd required\n");
@@ -338,63 +411,72 @@ static int cmd_embed(int argc, char *argv[]) {
     printf("OK:%lld\n", (long long)(LONG_PTR)targetHwnd);
     fflush(stdout);
 
-    /* stdin command loop — pump window messages while waiting for input.
-     * Without a message pump the main thread blocks on fgets and cannot
-     * dispatch cross-process WM_ACTIVATE / WM_SETFOCUS, causing deadlock.
-     *
-     * Use PeekNamedPipe to check for stdin data without blocking.
-     * MsgWaitForMultipleObjects is unreliable with anonymous pipe handles
-     * (as created by Node.js child_process.spawn). */
+    /* Event-driven stdin loop — reader thread blocks on fgets(),
+     * signals g_stdinEvent when data arrives. Main thread uses
+     * MsgWaitForMultipleObjects to wait for both window messages
+     * and stdin events with zero polling delay. */
     {
-        HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
         MSG msg;
-        DWORD bytesAvail;
+        char cmd[CMD_MAX_LEN];
+        int x, y, w, h;
+        HANDLE readerThread;
 
-        while (running) {
-            /* Process all pending window messages first */
-            while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-                TranslateMessage(&msg);
-                DispatchMessage(&msg);
-            }
+        InitializeCriticalSection(&g_cmdMutex);
+        g_stdinEvent = CreateEvent(NULL, FALSE, FALSE, NULL);  /* auto-reset */
+        g_running = 1;
 
-            /* Check if stdin pipe has data */
-            bytesAvail = 0;
-            if (!PeekNamedPipe(hStdin, NULL, 0, NULL, &bytesAvail, NULL) || bytesAvail == 0) {
-                Sleep(10);  /* No data — yield CPU, let messages accumulate */
-                continue;
-            }
+        readerThread = CreateThread(NULL, 0, stdinReaderThread, NULL, 0, NULL);
 
-            /* stdin data available — read a line */
-            if (!fgets(buf, sizeof(buf), stdin))
-                break;
-            buf[strcspn(buf, "\r\n")] = 0;
+        while (g_running) {
+            /* Wait for stdin event OR window messages — no polling, no Sleep */
+            DWORD result = MsgWaitForMultipleObjects(
+                1, &g_stdinEvent, FALSE, INFINITE, QS_ALLINPUT);
 
-            if (strncmp(buf, "EXIT", 4) == 0) {
-                fprintf(stderr, "EMBED: EXIT - cleaning up\n");
-                cleanupOverlay(targetHwnd);
-                running = 0;
-                break;
-            }
+            if (result == WAIT_OBJECT_0) {
+                /* stdin event: process all queued commands */
+                while (cmdQueuePop(cmd)) {
+                    if (strncmp(cmd, "EXIT", 4) == 0) {
+                        fprintf(stderr, "EMBED: EXIT - cleaning up\n");
+                        cleanupOverlay(targetHwnd);
+                        g_running = 0;
+                        break;
+                    }
 
-            if (strncmp(buf, "DETACH", 6) == 0) {
-                fprintf(stderr, "EMBED: DETACH - restoring window\n");
-                cleanupOverlay(targetHwnd);
-                printf("DETACH_OK\n");
-                fflush(stdout);
-                continue;
-            }
+                    if (strncmp(cmd, "DETACH", 6) == 0) {
+                        fprintf(stderr, "EMBED: DETACH - restoring window\n");
+                        cleanupOverlay(targetHwnd);
+                        printf("DETACH_OK\n");
+                        fflush(stdout);
+                        continue;
+                    }
 
-            /* Check if window is still valid */
-            if (!IsWindow(targetHwnd)) {
-                fprintf(stderr, "LOOP: hwnd %p no longer valid\n", targetHwnd);
-                running = 0;
-                break;
-            }
+                    if (!IsWindow(targetHwnd)) {
+                        fprintf(stderr, "LOOP: hwnd %p no longer valid\n", targetHwnd);
+                        g_running = 0;
+                        break;
+                    }
 
-            if (sscanf(buf, "%d,%d,%d,%d", &x, &y, &w, &h) == 4) {
-                repositionOverlay(targetHwnd, x, y, w, h);
+                    if (sscanf(cmd, "%d,%d,%d,%d", &x, &y, &w, &h) == 4) {
+                        repositionOverlay(targetHwnd, x, y, w, h);
+                    }
+                }
+            } else if (result == WAIT_OBJECT_0 + 1) {
+                /* Window messages: dispatch all pending */
+                while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&msg);
+                    DispatchMessage(&msg);
+                }
             }
         }
+
+        /* Clean up reader thread */
+        g_running = 0;
+        SetEvent(g_stdinEvent);  /* wake reader thread if blocked */
+        WaitForSingleObject(readerThread, 2000);
+        CloseHandle(readerThread);
+        CloseHandle(g_stdinEvent);
+        g_stdinEvent = NULL;
+        DeleteCriticalSection(&g_cmdMutex);
 
         /* Drain any remaining messages before cleanup */
         while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {

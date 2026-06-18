@@ -378,6 +378,38 @@ static int cmd_find_window(int argc, char *argv[]) {
     return 1;
 }
 
+/* cmd_show_window: Find OneNote window, ensure visible, print its HWND.
+ * Handles cold start: CFrame may exist at (-21333,-21333) or be minimized. */
+static int cmd_show_window(int argc, char *argv[]) {
+    HWND h = findOneNoteWindow();
+    if (!h) {
+        printf("ERR:OneNote window not found\n");
+        return 1;
+    }
+
+    RECT rc;
+    GetWindowRect(h, &rc);
+
+    /* Check if window is off-screen (cold start position) */
+    if (rc.left < -10000 || rc.top < -10000) {
+        fprintf(stderr, "show-window: window off-screen at (%ld,%ld), restoring\n",
+                rc.left, rc.top);
+        ShowWindow(h, SW_RESTORE);
+        /* Move to a reasonable default position */
+        SetWindowPos(h, HWND_TOP, 100, 100, 800, 600,
+                     SWP_SHOWWINDOW);
+    } else if (IsIconic(h)) {
+        fprintf(stderr, "show-window: window minimized, restoring\n");
+        ShowWindow(h, SW_RESTORE);
+    } else if (!IsWindowVisible(h)) {
+        fprintf(stderr, "show-window: window hidden, showing\n");
+        ShowWindow(h, SW_SHOW);
+    }
+
+    printf("OK:%lld\n", (long long)(LONG_PTR)h);
+    return 0;
+}
+
 static int cmd_test(int argc, char *argv[]) {
     IDispatch *app;
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
@@ -409,6 +441,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "  quit               - quit OneNote application\n");
         fprintf(stderr, "  test               - test COM + window detection\n");
         fprintf(stderr, "  find-window        - find OneNote window HWND\n");
+        fprintf(stderr, "  show-window        - find OneNote window, ensure visible\n");
         return 1;
     }
 
@@ -418,6 +451,7 @@ int main(int argc, char *argv[]) {
     if (strcmp(cmd, "quit")        == 0) return cmd_quit(argc, argv);
     if (strcmp(cmd, "test")        == 0) return cmd_test(argc, argv);
     if (strcmp(cmd, "find-window") == 0) return cmd_find_window(argc, argv);
+    if (strcmp(cmd, "show-window") == 0) return cmd_show_window(argc, argv);
 
     fprintf(stderr, "Unknown command: %s\n", cmd);
     return 1;
