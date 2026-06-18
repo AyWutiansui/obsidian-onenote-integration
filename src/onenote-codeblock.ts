@@ -417,20 +417,26 @@ export class OneNoteCodeBlockRenderer {
 
     // --- Notebook dropdown ---
     const notebookLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label', attr: { for: 'onenote-nb-select' } });
-    notebookLabel.textContent = 'Notebook';
+    const nbIcon = notebookLabel.createSpan({ cls: 'onenote-item-icon' });
+    setIcon(nbIcon, 'book');
+    notebookLabel.createSpan({ text: 'Notebook' });
     const notebookSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select', attr: { id: 'onenote-nb-select' } });
     notebookSelect.createEl('option', { text: 'Loading notebooks...', value: '' });
 
     // --- Section dropdown ---
     const sectionLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label', attr: { for: 'onenote-sec-select' } });
-    sectionLabel.textContent = 'Section';
+    const secIcon = sectionLabel.createSpan({ cls: 'onenote-item-icon' });
+    setIcon(secIcon, 'folder');
+    sectionLabel.createSpan({ text: 'Section' });
     const sectionSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select', attr: { id: 'onenote-sec-select' } });
     sectionSelect.disabled = true;
     sectionSelect.createEl('option', { text: 'Select a notebook first', value: '' });
 
     // --- Page dropdown (lazy — loads when section is selected) ---
     const pageLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label', attr: { for: 'onenote-page-select' } });
-    pageLabel.textContent = 'Page';
+    const pgIcon = pageLabel.createSpan({ cls: 'onenote-item-icon' });
+    setIcon(pgIcon, 'file-text');
+    pageLabel.createSpan({ text: 'Page' });
     const pageSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select', attr: { id: 'onenote-page-select' } });
     pageSelect.disabled = true;
     pageSelect.createEl('option', { text: 'Select a section first', value: '' });
