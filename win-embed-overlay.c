@@ -205,10 +205,7 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
     fprintf(stderr, "REPARENT: SetParent returned %p, lastError=%lu\n", result, lastError);
 
     if (result != NULL || lastError == 0) {
-        RECT rc;
-        GetWindowRect(targetHwnd, &rc);
-        fprintf(stderr, "REPARENT: MODE=REPARENT rect=%ld,%ld %ldx%ld\n",
-                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+        fprintf(stderr, "REPARENT: SetParent succeeded (reparent mode)\n");
         ShowWindow(targetHwnd, SW_SHOW);
         g_isReparented = 1;
         return 1;
@@ -219,12 +216,6 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
     SetWindowLong(targetHwnd, GWL_STYLE, newStyle);
     SetWindowPos(targetHwnd, NULL, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-    {
-        RECT rc;
-        GetWindowRect(targetHwnd, &rc);
-        fprintf(stderr, "REPARENT: MODE=POSITION-ONLY rect=%ld,%ld %ldx%ld\n",
-                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
-    }
     ShowWindow(targetHwnd, SW_SHOW);
     return 0;  /* 0 = position-only mode (not an error) */
 }
@@ -276,23 +267,8 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
                      * doesn't recalculate after frame stripping + reparent.
                      * SendMessage(WM_SIZE) synchronously delivers real dimensions,
                      * forcing OneNote to resize its content area. */
-                    RECT rcBefore, rcAfter;
-                    LRESULT smr;
-                    GetWindowRect(targetHwnd, &rcBefore);
-                    fprintf(stderr, "REPOS-REP: FIRST before=%ld,%ld %ldx%ld target=%dx%d\n",
-                            rcBefore.left, rcBefore.top,
-                            rcBefore.right - rcBefore.left, rcBefore.bottom - rcBefore.top,
-                            w, h);
-                    smr = SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
-                                      MAKELPARAM(w, h));
-                    GetWindowRect(targetHwnd, &rcAfter);
-                    fprintf(stderr, "REPOS-REP: WM_SIZE ret=%lld after=%ld,%ld %ldx%ld\n",
-                            (long long)smr,
-                            rcAfter.left, rcAfter.top,
-                            rcAfter.right - rcAfter.left, rcAfter.bottom - rcAfter.top);
-                } else {
-                    fprintf(stderr, "REPOS-REP: RESIZE %d→%d, %d→%d\n",
-                            g_lastW, w, g_lastH, h);
+                    SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
+                                MAKELPARAM(w, h));
                 }
                 SetWindowPos(targetHwnd, NULL, 0, 0, w, h,
                              SWP_NOACTIVATE | SWP_NOZORDER);
@@ -303,36 +279,13 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
     } else {
         /* Position-only mode: move target directly to screen coords */
         if (targetHwnd && IsWindow(targetHwnd)) {
-            fprintf(stderr, "REPOS-POS: g_lastW=%d target=%dx%d\n", g_lastW, w, h);
             if (g_lastW == 0) {
-                RECT rcBefore, rcAfter;
-                LRESULT smr;
-                GetWindowRect(targetHwnd, &rcBefore);
-                fprintf(stderr, "REPOS-POS: FIRST-SHOW before=%ld,%ld %ldx%ld\n",
-                        rcBefore.left, rcBefore.top,
-                        rcBefore.right - rcBefore.left, rcBefore.bottom - rcBefore.top);
-
-                smr = SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
+                /* First reposition: force OneNote layout recalculation */
+                SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
                             MAKELPARAM(w, h));
-                fprintf(stderr, "REPOS-POS: SendMessage(WM_SIZE,%d,%d) ret=%lld\n",
-                        w, h, (long long)smr);
-
-                GetWindowRect(targetHwnd, &rcAfter);
-                fprintf(stderr, "REPOS-POS: after-WM_SIZE rect=%ld,%ld %ldx%ld\n",
-                        rcAfter.left, rcAfter.top,
-                        rcAfter.right - rcAfter.left, rcAfter.bottom - rcAfter.top);
-
                 ShowWindow(targetHwnd, SW_SHOW);
-                SetWindowPos(targetHwnd, NULL, x, y, w, h,
-                             SWP_NOACTIVATE | SWP_NOZORDER);
-
-                GetWindowRect(targetHwnd, &rcAfter);
-                fprintf(stderr, "REPOS-POS: after-SetWindowPos rect=%ld,%ld %ldx%ld\n",
-                        rcAfter.left, rcAfter.top,
-                        rcAfter.right - rcAfter.left, rcAfter.bottom - rcAfter.top);
-            } else if (w != g_lastW || h != g_lastH) {
-                fprintf(stderr, "REPOS-POS: RESIZE %d→%d, %d→%d\n",
-                        g_lastW, w, g_lastH, h);
+            }
+            if (w != g_lastW || h != g_lastH) {
                 SetWindowPos(targetHwnd, NULL, x, y, w, h,
                              SWP_NOACTIVATE | SWP_NOZORDER);
             } else {

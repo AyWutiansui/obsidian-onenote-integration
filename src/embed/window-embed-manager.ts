@@ -63,8 +63,10 @@ export class WindowEmbedManager {
       child.stderr?.on('data', (data: Buffer) => {
         const msg = data.toString().trim();
         if (!msg) return;
-        // Log all stderr for diagnostics (C exe uses stderr for structured logs)
-        console.log('[WinEmbed] stderr:', msg);
+        const lower = msg.toLowerCase();
+        if (lower.includes('error') || lower.includes('fail') || lower.includes('err:')) {
+          console.error('[WinEmbed] stderr:', msg);
+        }
       });
 
       child.stdout?.on('data', (data: Buffer) => {
