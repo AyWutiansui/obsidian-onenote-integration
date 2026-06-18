@@ -792,9 +792,13 @@ export class OneNoteLocalService {
    *   2. Find the OneNote window HWND (repos.exe find-window)
    *   3. Embed that HWND (win-embed.exe embed <hwnd>)
    *
+   * @param skipStabilization - Skip the 500ms post-nav pause and 3-round
+   *   stabilization loop. Use for reattach where OneNote is already running —
+   *   the findOneNoteWindowHwnd polling is sufficient. Saves ~1.1s.
+   *
    * Returns the OneNote HWND for tracking.
    */
-  async embedOneNoteWindow(pageId: string): Promise<string> {
+  async embedOneNoteWindow(pageId: string, skipStabilization: boolean = false): Promise<string> {
     if (!this._embedManager) {
       throw new Error('Plugin directory not set — call setPluginDir() first');
     }
@@ -816,30 +820,34 @@ export class OneNoteLocalService {
       throw new Error('Failed to navigate OneNote to page — make sure OneNote is running');
     }
 
-    // Brief pause for OneNote to finish navigating and create its CFrame window.
-    // The findOneNoteWindowHwnd loop below has its own retries for cold start.
-    await new Promise(r => setTimeout(r, 500));
+    if (!skipStabilization) {
+      // Brief pause for OneNote to finish navigating and create its CFrame window.
+      // Skipped for reattach — findOneNoteWindowHwnd polling handles the wait.
+      await new Promise(r => setTimeout(r, 500));
+    }
 
     // Step 2: Find the OneNote window HWND
     let hwnd = await this.findOneNoteWindowHwnd();
 
-    // Step 2b: Stabilization — re-verify the window after a delay.
-    // During cold start, OneNote may still be loading the page or repositioning
-    // its window. We check again to confirm the window is stable before embedding.
-    for (let stabAttempt = 0; stabAttempt < 3; stabAttempt++) {
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        const verifyOutput = await this.runExe(['show-window']);
-        if (verifyOutput.startsWith('OK:')) {
-          const verifyHwnd = verifyOutput.substring(3);
-          if (verifyHwnd === hwnd) {
-            break;  // Same window still present — stable
+    if (!skipStabilization) {
+      // Step 2b: Stabilization — re-verify the window after a delay.
+      // During cold start, OneNote may still be loading the page or repositioning
+      // its window. We check again to confirm the window is stable before embedding.
+      for (let stabAttempt = 0; stabAttempt < 3; stabAttempt++) {
+        await new Promise(r => setTimeout(r, 500));
+        try {
+          const verifyOutput = await this.runExe(['show-window']);
+          if (verifyOutput.startsWith('OK:')) {
+            const verifyHwnd = verifyOutput.substring(3);
+            if (verifyHwnd === hwnd) {
+              break;  // Same window still present — stable
+            }
+            hwnd = verifyHwnd;  // Window changed (rare), use new one
           }
-          hwnd = verifyHwnd;  // Window changed (rare), use new one
+        } catch {
+          // Verification failed, proceed with original HWND
+          break;
         }
-      } catch {
-        // Verification failed, proceed with original HWND
-        break;
       }
     }
 

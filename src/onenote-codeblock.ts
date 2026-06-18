@@ -280,19 +280,20 @@ export class OneNoteCodeBlockRenderer {
               const newSessionId = localService.beginEmbedSession();
               currentSessionId = newSessionId;
 
-              // Embed OneNote window (with cold-start fallback)
+              // Embed OneNote window: skip stabilization for fast reattach (~1.1s saved).
+              // COM navigation still runs to ensure OneNote is on the correct page.
+              // If OneNote isn't running, the COM call triggers startup — cold-start
+              // fallback waits 20s then retries with full stabilization.
               let hwnd: string;
               try {
-                hwnd = await localService.embedOneNoteWindow(pageId);
+                hwnd = await localService.embedOneNoteWindow(pageId, true);
               } catch (firstError: any) {
-                // Cold start fallback: the first attempt's COM call already triggered
-                // OneNote to start. Give it more time to fully load, then retry.
-                console.warn('[OneNote Embed] First embed failed, cold start retry:', firstError.message);
+                console.warn('[OneNote Embed] Fast embed failed, cold start retry:', firstError.message);
                 statusDiv.textContent = 'Starting OneNote... (this may take a moment)';
                 try { this.openInOneNoteLocal(pageId); } catch {}
                 await new Promise(r => setTimeout(r, 20000));
                 statusDiv.textContent = 'Embedding OneNote window...';
-                hwnd = await localService.embedOneNoteWindow(pageId);
+                hwnd = await localService.embedOneNoteWindow(pageId, false);
               }
 
               // Success — clear status
