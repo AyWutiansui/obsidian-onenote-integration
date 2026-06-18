@@ -1,4 +1,9 @@
+# Dependencies
 node_modules/
+
+# Build artifacts
+main.js
+main.js.map
 
 # Compiled binaries and object files
 *.exe
@@ -6,17 +11,24 @@ node_modules/
 
 # Logs
 *.log
+_compile_out.txt
+compile_log*.txt
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# Build output
-main.js
-main.js.map
+# IDE
+.vscode/
+.idea/
+*.iml
 
-# Compile logs
-compile_log*.txt
+# Obsidian
+data.json
+
+# Temporary / local dev files
+_compile.bat
+git-askpass.sh
 
 # Archive directory (legacy code, scripts, docs)
 archive/

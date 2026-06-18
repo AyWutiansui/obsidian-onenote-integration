@@ -1,5 +1,4 @@
 import esbuild from 'esbuild';
-import { copy } from 'esbuild-plugin-copy';
 
 const production = process.argv.includes('production');
 
@@ -8,7 +7,7 @@ const buildOptions = {
   bundle: true,
   format: 'cjs',
   target: 'es2018',
-  outdir: '../test-vault/.obsidian/plugins/obsidian-onenote-integration',
+  outdir: '.',
   external: [
     'obsidian',
     'electron',
@@ -34,14 +33,7 @@ const buildOptions = {
     '.ts': 'ts',
     '.tsx': 'tsx'
   },
-  plugins: [
-    copy({
-      assets: {
-        from: ['./manifest.json', './styles.css', './onenote-repos.exe', './win-embed-overlay.exe'],
-        to: ['./']
-      }
-    })
-  ],
+  plugins: [],
   minify: production,
   sourcemap: production ? false : 'inline',
   treeShaking: true

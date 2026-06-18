@@ -5,17 +5,19 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production && node -e \"require('fs').copyFileSync('onenote-repos.exe','../test-vault/.obsidian/plugins/obsidian-onenote-integration/onenote-repos.exe'); require('fs').copyFileSync('win-embed-overlay.exe','../test-vault/.obsidian/plugins/obsidian-onenote-integration/win-embed-overlay.exe')\"",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "build:test": "npm run build && node -e \"const fs=require('fs'),d='../test-vault/.obsidian/plugins/obsidian-onenote-integration';fs.mkdirSync(d,{recursive:true});['main.js','manifest.json','styles.css','onenote-repos.exe','win-embed-overlay.exe'].forEach(f=>{try{fs.copyFileSync(f,d+'/'+f)}catch(e){console.warn('skip:',f)}})\"",
     "watch": "node esbuild.config.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "compile:exe": "compile-repos.bat"
   },
   "keywords": [
     "obsidian",
     "onenote",
     "plugin"
   ],
-  "author": "",
+  "author": "Qoder",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^18.0.0",

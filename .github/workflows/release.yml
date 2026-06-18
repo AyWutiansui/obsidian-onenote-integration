@@ -1,0 +1,58 @@
+name: Release Obsidian plugin
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18.x"
+
+      - name: Install MinGW-w64 cross-compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build TypeScript plugin
+        run: npm run build
+
+      - name: Cross-compile C helpers for Windows
+        run: |
+          CC=x86_64-w64-mingw32-gcc
+
+          $CC -O2 -static \
+            repos.c \
+            -luser32 -lole32 -loleaut32 -ldwmapi -lpsapi -lshell32 -lshcore -luuid \
+            -o onenote-repos.exe
+
+          $CC -O2 -static \
+            win-embed-overlay.c \
+            -luser32 -lpsapi -ldwmapi -lshcore \
+            -o win-embed-overlay.exe
+
+          ls -lh *.exe
+
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+
+          gh release create "$tag" \
+            --title="$tag" \
+            --draft \
+            main.js manifest.json styles.css versions.json \
+            onenote-repos.exe win-embed-overlay.exe

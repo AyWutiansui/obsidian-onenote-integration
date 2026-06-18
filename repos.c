@@ -1,8 +1,13 @@
 /*
  * onenote-repos.exe - COM-based OneNote operations only
  *
- * Build:
+ * Build (MSVC):
  *   cl /O2 repos.c user32.lib ole32.lib oleaut32.lib /Fe:onenote-repos.exe
+ *
+ * Build (MinGW-w64 cross-compile):
+ *   x86_64-w64-mingw32-gcc -O2 -static repos.c \
+ *     -luser32 -lole32 -loleaut32 -ldwmapi -lpsapi -lshell32 -lshcore -luuid \
+ *     -o onenote-repos.exe
  *
  * Commands:
  *   navigate <pageId>  - navigate OneNote to a specific page

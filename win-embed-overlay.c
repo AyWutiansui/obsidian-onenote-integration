@@ -5,8 +5,12 @@
  * z-order with Obsidian's modals. The overlay is owned by Obsidian's main
  * window, so Windows DWM automatically places it below Obsidian's modals.
  *
- * Build:
+ * Build (MSVC):
  *   cl /O2 win-embed-overlay.c user32.lib psapi.lib dwmapi.lib /Fe:win-embed.exe
+ *
+ * Build (MinGW-w64 cross-compile):
+ *   x86_64-w64-mingw32-gcc -O2 -static win-embed-overlay.c \
+ *     -luser32 -lpsapi -ldwmapi -lshcore -o win-embed-overlay.exe
  *
  * Commands:
  *   embed <hwnd>           - Embed window using overlay, enter stdin loop
