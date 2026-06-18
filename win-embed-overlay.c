@@ -205,7 +205,10 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
     fprintf(stderr, "REPARENT: SetParent returned %p, lastError=%lu\n", result, lastError);
 
     if (result != NULL || lastError == 0) {
-        fprintf(stderr, "REPARENT: SetParent succeeded (reparent mode)\n");
+        RECT rc;
+        GetWindowRect(targetHwnd, &rc);
+        fprintf(stderr, "REPARENT: MODE=REPARENT rect=%ld,%ld %ldx%ld\n",
+                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
         ShowWindow(targetHwnd, SW_SHOW);
         g_isReparented = 1;
         return 1;
@@ -216,6 +219,12 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
     SetWindowLong(targetHwnd, GWL_STYLE, newStyle);
     SetWindowPos(targetHwnd, NULL, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    {
+        RECT rc;
+        GetWindowRect(targetHwnd, &rc);
+        fprintf(stderr, "REPARENT: MODE=POSITION-ONLY rect=%ld,%ld %ldx%ld\n",
+                rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+    }
     ShowWindow(targetHwnd, SW_SHOW);
     return 0;  /* 0 = position-only mode (not an error) */
 }
@@ -271,27 +280,36 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
     } else {
         /* Position-only mode: move target directly to screen coords */
         if (targetHwnd && IsWindow(targetHwnd)) {
+            fprintf(stderr, "REPOS-POS: g_lastW=%d target=%dx%d\n", g_lastW, w, h);
             if (g_lastW == 0) {
-                /* First reposition after reparent: force OneNote to recalculate
-                 * its layout for the frameless window.
-                 *
-                 * After frame stripping (SWP_FRAMECHANGED → WM_NCCALCSIZE), the
-                 * non-client area becomes 0, but OneNote's internal layout engine
-                 * doesn't react until it receives WM_SIZE with real dimensions.
-                 *
-                 * SendMessage delivers WM_SIZE synchronously — OneNote processes
-                 * it immediately, unlike PostMessage which queues it. This avoids
-                 * the visual flicker of a two-step resize (1x1 → target).
-                 *
-                 * After SendMessage(WM_SIZE), OneNote's client area is correct.
-                 * SetWindowPos below only moves the window to (x,y) — the size
-                 * is already right, so no redundant WM_SIZE is generated. */
-                SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
+                RECT rcBefore, rcAfter;
+                LRESULT smr;
+                GetWindowRect(targetHwnd, &rcBefore);
+                fprintf(stderr, "REPOS-POS: FIRST-SHOW before=%ld,%ld %ldx%ld\n",
+                        rcBefore.left, rcBefore.top,
+                        rcBefore.right - rcBefore.left, rcBefore.bottom - rcBefore.top);
+
+                smr = SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
                             MAKELPARAM(w, h));
+                fprintf(stderr, "REPOS-POS: SendMessage(WM_SIZE,%d,%d) ret=%lld\n",
+                        w, h, (long long)smr);
+
+                GetWindowRect(targetHwnd, &rcAfter);
+                fprintf(stderr, "REPOS-POS: after-WM_SIZE rect=%ld,%ld %ldx%ld\n",
+                        rcAfter.left, rcAfter.top,
+                        rcAfter.right - rcAfter.left, rcAfter.bottom - rcAfter.top);
+
                 ShowWindow(targetHwnd, SW_SHOW);
                 SetWindowPos(targetHwnd, NULL, x, y, w, h,
                              SWP_NOACTIVATE | SWP_NOZORDER);
+
+                GetWindowRect(targetHwnd, &rcAfter);
+                fprintf(stderr, "REPOS-POS: after-SetWindowPos rect=%ld,%ld %ldx%ld\n",
+                        rcAfter.left, rcAfter.top,
+                        rcAfter.right - rcAfter.left, rcAfter.bottom - rcAfter.top);
             } else if (w != g_lastW || h != g_lastH) {
+                fprintf(stderr, "REPOS-POS: RESIZE %d→%d, %d→%d\n",
+                        g_lastW, w, g_lastH, h);
                 SetWindowPos(targetHwnd, NULL, x, y, w, h,
                              SWP_NOACTIVATE | SWP_NOZORDER);
             } else {

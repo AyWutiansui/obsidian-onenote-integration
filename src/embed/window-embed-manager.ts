@@ -63,12 +63,8 @@ export class WindowEmbedManager {
       child.stderr?.on('data', (data: Buffer) => {
         const msg = data.toString().trim();
         if (!msg) return;
-        // C++ exe uses stderr for diagnostics (OVERLAY, REPARENT, REPOSITION etc.)
-        // Only log as error if it contains actual error indicators
-        const lower = msg.toLowerCase();
-        if (lower.includes('error') || lower.includes('fail') || lower.includes('err:')) {
-          console.error('[WinEmbed] stderr:', msg);
-        }
+        // Log all stderr for diagnostics (C exe uses stderr for structured logs)
+        console.log('[WinEmbed] stderr:', msg);
       });
 
       child.stdout?.on('data', (data: Buffer) => {
