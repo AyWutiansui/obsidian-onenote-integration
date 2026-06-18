@@ -48,10 +48,9 @@ export class OneNoteCodeBlockRenderer {
 
       // Show loading
       const loadingDiv = container.createDiv({ cls: 'onenote-loading' });
-      loadingDiv.style.textAlign = 'center';
-      loadingDiv.style.padding = '20px';
-      loadingDiv.style.color = 'var(--text-muted)';
-      loadingDiv.textContent = 'Loading OneNote content...';
+      const spinner = loadingDiv.createSpan({ cls: 'onenote-spinner' });
+      spinner.textContent = '';
+      loadingDiv.createSpan({ text: ' Loading OneNote content...' });
 
       try {
         const { pageId, pageTitle } = parseCodeBlockSource(source);
@@ -83,9 +82,10 @@ export class OneNoteCodeBlockRenderer {
           embedContainer.style.height = `${embedHeight}px`;
 
           // Detach/Attach toggle button — created early so we can measure overhead
-          const btnContainer = container.createDiv({ cls: 'onenote-handwritten-actions' });
+          const btnContainer = container.createDiv({ cls: 'onenote-embed-actions' });
 
           let isAttached = true;
+          let isTransitioning = false;
 
           const actionBtn = btnContainer.createEl('button', {
             text: 'Detach OneNote Window',
@@ -109,9 +109,6 @@ export class OneNoteCodeBlockRenderer {
           container.style.height = `${embedHeight + overhead}px`;
 
           const statusDiv = embedContainer.createDiv({ cls: 'onenote-embed-status' });
-          statusDiv.style.padding = '8px';
-          statusDiv.style.textAlign = 'center';
-          statusDiv.style.color = 'var(--text-muted)';
           statusDiv.textContent = 'Embedding OneNote window...';
 
           try {
@@ -154,7 +151,7 @@ export class OneNoteCodeBlockRenderer {
             } else {
               statusDiv.textContent = `Failed to embed OneNote: ${msg}`;
             }
-            statusDiv.style.color = 'var(--text-error)';
+            statusDiv.addClass('onenote-embed-status--error');
           }
           
           const doDetach = async () => {
@@ -176,7 +173,6 @@ export class OneNoteCodeBlockRenderer {
             
             // Hide embed container
             embedContainer.style.height = '0px';
-            embedContainer.style.overflow = 'hidden';
             container.style.height = `${overhead}px`;
             
             // Update UI
@@ -220,7 +216,6 @@ export class OneNoteCodeBlockRenderer {
               
               // Show embed container with calculated height
               embedContainer.style.height = `${embedHeight}px`;
-              embedContainer.style.overflow = 'hidden';
               container.style.height = `${embedHeight + overhead}px`;
               
               // Update UI
@@ -238,11 +233,19 @@ export class OneNoteCodeBlockRenderer {
           };
           
           actionBtn.addEventListener('click', async () => {
-            if (isAttached) {
-              await doDetach();
-              new Notice('OneNote window detached');
-            } else {
-              await doAttach();
+            if (isTransitioning) return;
+            isTransitioning = true;
+            actionBtn.disabled = true;
+            try {
+              if (isAttached) {
+                await doDetach();
+                new Notice('OneNote window detached');
+              } else {
+                await doAttach();
+              }
+            } finally {
+              isTransitioning = false;
+              actionBtn.disabled = false;
             }
           });
         } else {
@@ -409,22 +412,22 @@ export class OneNoteCodeBlockRenderer {
     const controlsContainer = container.createDiv({ cls: 'onenote-page-selector-controls' });
 
     // --- Notebook dropdown ---
-    const notebookLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label' });
+    const notebookLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label', attr: { for: 'onenote-nb-select' } });
     notebookLabel.textContent = 'Notebook';
-    const notebookSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select' });
+    const notebookSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select', attr: { id: 'onenote-nb-select' } });
     notebookSelect.createEl('option', { text: 'Loading notebooks...', value: '' });
 
     // --- Section dropdown ---
-    const sectionLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label' });
+    const sectionLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label', attr: { for: 'onenote-sec-select' } });
     sectionLabel.textContent = 'Section';
-    const sectionSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select' });
+    const sectionSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select', attr: { id: 'onenote-sec-select' } });
     sectionSelect.disabled = true;
     sectionSelect.createEl('option', { text: 'Select a notebook first', value: '' });
 
     // --- Page dropdown (lazy — loads when section is selected) ---
-    const pageLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label' });
+    const pageLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label', attr: { for: 'onenote-page-select' } });
     pageLabel.textContent = 'Page';
-    const pageSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select' });
+    const pageSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select', attr: { id: 'onenote-page-select' } });
     pageSelect.disabled = true;
     pageSelect.createEl('option', { text: 'Select a section first', value: '' });
 
@@ -518,18 +521,23 @@ export class OneNoteCodeBlockRenderer {
       text: 'Load Page',
       cls: 'mod-cta'
     });
-    loadButton.style.flex = '1';
 
     const openButton = buttonContainer.createEl('button', {
       text: 'Open in OneNote'
     });
-    openButton.style.flex = '1';
 
     loadButton.addEventListener('click', async () => {
       const pageId = pageSelect.value;
       if (pageId) {
-        const pageTitle = pageSelect.options[pageSelect.selectedIndex]?.text || '';
-        await this.replaceCodeBlockContent(pageId, pageTitle, el, ctx, source);
+        loadButton.disabled = true;
+        loadButton.textContent = 'Loading...';
+        try {
+          const pageTitle = pageSelect.options[pageSelect.selectedIndex]?.text || '';
+          await this.replaceCodeBlockContent(pageId, pageTitle, el, ctx, source);
+        } finally {
+          loadButton.disabled = false;
+          loadButton.textContent = 'Load Page';
+        }
       } else {
         new Notice('Please select a page');
       }

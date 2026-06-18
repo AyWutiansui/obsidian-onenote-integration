@@ -23,6 +23,17 @@
   color: var(--text-muted);
 }
 
+.onenote-embed-status--error {
+  color: var(--text-error);
+}
+
+/* ===== Button Area (code block embed) ===== */
+.onenote-embed-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+}
+
 .onenote-iframe {
   width: 100%;
   height: 100%;
@@ -234,6 +245,10 @@
   margin-top: 4px;
 }
 
+.onenote-page-selector-buttons button {
+  flex: 1;
+}
+
 /* ===== Messages ===== */
 .onenote-error-message {
   color: var(--text-error);
@@ -341,4 +356,20 @@
   display: flex;
   gap: 8px;
   padding: 8px 0;
+}
+
+/* ===== Sidebar List Containers ===== */
+.onenote-notebook-list,
+.onenote-section-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ===== Accessibility: keyboard focus indicator ===== */
+[role="button"]:focus-visible,
+.onenote-breadcrumb-item:focus-visible {
+  outline: 2px solid var(--text-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }

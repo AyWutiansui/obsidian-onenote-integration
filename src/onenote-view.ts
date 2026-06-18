@@ -80,18 +80,27 @@ export class OneNoteEmbedView extends ItemView {
     await this.loadNotebooks(this.contentDiv);
   }
 
-  /** Create a clickable list item with unified styling. */
+  /** Create a clickable list item with unified styling and accessibility. */
   private renderListItem(
     parent: HTMLElement, text: string, onClick: () => void | Promise<void>,
     childCount?: number
   ): HTMLElement {
     const item = parent.createDiv({ cls: 'onenote-list-item' });
+    item.setAttribute('role', 'button');
+    item.setAttribute('tabindex', '0');
+    item.setAttribute('aria-label', text);
     item.createSpan({ text });
     if (childCount !== undefined) {
       const badge = item.createSpan({ cls: 'onenote-item-count' });
       badge.textContent = `${childCount}`;
     }
     item.addEventListener('click', onClick);
+    item.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onClick();
+      }
+    });
     return item;
   }
 
@@ -104,6 +113,20 @@ export class OneNoteEmbedView extends ItemView {
     return loadingDiv;
   }
 
+  /** Make a non-button element keyboard-accessible and screen-reader friendly. */
+  private makeClickable(el: HTMLElement, onClick: () => void | Promise<void>, label?: string): void {
+    el.setAttribute('role', 'button');
+    el.setAttribute('tabindex', '0');
+    if (label) el.setAttribute('aria-label', label);
+    el.addEventListener('click', onClick);
+    el.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        onClick();
+      }
+    });
+  }
+
   /** Render breadcrumb navigation showing the current hierarchy path. */
   private renderBreadcrumb(container: HTMLElement): void {
     const crumb = container.createDiv({ cls: 'onenote-breadcrumb' });
@@ -111,7 +134,7 @@ export class OneNoteEmbedView extends ItemView {
     // Root: always clickable to go back to notebook list
     const root = crumb.createSpan({ cls: 'onenote-breadcrumb-item' });
     root.textContent = '📓 Notebooks';
-    root.addEventListener('click', () => {
+    this.makeClickable(root, () => {
       this.currentNotebook = null;
       this.currentNotebookName = '';
       this.currentSection = null;
@@ -119,13 +142,13 @@ export class OneNoteEmbedView extends ItemView {
       this.currentPage = null;
       this.currentPageName = '';
       this.loadNotebooks(this.contentDiv!);
-    });
+    }, 'Back to Notebooks');
 
     if (this.currentNotebookName) {
       crumb.createSpan({ cls: 'onenote-breadcrumb-sep', text: ' › ' });
       const nb = crumb.createSpan({ cls: 'onenote-breadcrumb-item' });
       nb.textContent = this.currentNotebookName;
-      nb.addEventListener('click', () => {
+      this.makeClickable(nb, () => {
         if (this.currentNotebook) {
           this.currentSection = null;
           this.currentSectionName = '';
@@ -133,20 +156,20 @@ export class OneNoteEmbedView extends ItemView {
           this.currentPageName = '';
           this.loadSections(this.currentNotebook, this.contentDiv!);
         }
-      });
+      }, `Back to ${this.currentNotebookName}`);
     }
 
     if (this.currentSectionName) {
       crumb.createSpan({ cls: 'onenote-breadcrumb-sep', text: ' › ' });
       const sec = crumb.createSpan({ cls: 'onenote-breadcrumb-item' });
       sec.textContent = this.currentSectionName;
-      sec.addEventListener('click', () => {
+      this.makeClickable(sec, () => {
         if (this.currentSection) {
           this.currentPage = null;
           this.currentPageName = '';
           this.loadPages(this.currentSection, this.contentDiv!);
         }
-      });
+      }, `Back to ${this.currentSectionName}`);
     }
 
     if (this.currentPageName) {
@@ -200,7 +223,7 @@ export class OneNoteEmbedView extends ItemView {
               const titleSpan = item.createSpan({ cls: 'onenote-search-title' });
               titleSpan.textContent = pageTitle;
 
-              item.addEventListener('click', async () => {
+              this.makeClickable(item, async () => {
                 this.currentNotebook = nb.id;
                 this.currentNotebookName = nb.name;
                 this.currentSection = sec.id;
@@ -208,7 +231,7 @@ export class OneNoteEmbedView extends ItemView {
                 this.currentPage = page.id;
                 this.currentPageName = pageTitle;
                 await this.displayPage(page, container);
-              });
+              }, `Open ${pageTitle}`);
             }
           }
         }
@@ -459,11 +482,11 @@ export class OneNoteEmbedView extends ItemView {
           }
         }
 
-        pageItem.addEventListener('click', async () => {
+        this.makeClickable(pageItem, async () => {
           this.currentPage = page.id;
           this.currentPageName = page.title || 'Untitled Page';
           await this.displayPage(page, container);
-        });
+        }, `Open ${page.title || 'Untitled Page'}`);
       }
     } catch (error: any) {
       container.createEl('div', {
@@ -502,11 +525,23 @@ export class OneNoteEmbedView extends ItemView {
       if (content) {
         const iframeContainer = container.createDiv({ cls: 'onenote-embed-container' });
         // Wrap content in a complete HTML document for proper iframe rendering
+        // Use prefers-color-scheme for theme-aware colors since srcdoc iframes
+        // cannot inherit Obsidian's CSS variables directly.
         const htmlShell = `<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>body{font-family:system-ui,-apple-system,sans-serif;padding:12px;margin:0;color:#333;line-height:1.6}img{max-width:100%;height:auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:8px}</style>
+<style>
+:root{color-scheme:light dark}
+body{font-family:system-ui,-apple-system,sans-serif;padding:12px;margin:0;line-height:1.6;color:#1a1a1a;background:#fff}
+img{max-width:100%;height:auto}
+table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #ccc;padding:8px}
+@media(prefers-color-scheme:dark){
+body{color:#e0e0e0;background:#1e1e1e}
+td,th{border-color:#444}
+}
+</style>
 </head><body>${content}</body></html>`;
         iframeContainer.createEl('iframe', {
           cls: 'onenote-iframe',
