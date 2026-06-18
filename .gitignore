@@ -14,21 +14,13 @@ Thumbs.db
 # Build output
 main.js
 main.js.map
-styles.css
 
-# Old/intermediate C source versions (current: repos.c, win-embed-overlay.c)
-repos-direct.cpp
-repos-overlay-backup.cpp
-repos.cpp.backup
-scan-onenote.cpp
-scan-windows.cpp
-win-embed.c
-win-embed-final-v3.c
-win-embed-position.c
-win-embed-position-v2.c
-win-embed-v10.c
-win-embed-v6-final.c
+# Compile logs
+compile_log*.txt
+
+# Archive directory (legacy code, scripts, docs)
+archive/
 
 # Test artifacts
-c-tests/*.exe
-c-tests/*.obj
+tests/**/*.exe
+tests/**/*.obj
