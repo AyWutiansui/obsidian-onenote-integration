@@ -271,6 +271,29 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
         }
         if (w != g_lastW || h != g_lastH) {
             if (targetHwnd && IsWindow(targetHwnd)) {
+                if (g_lastW == 0) {
+                    /* First reposition after reparent: OneNote's layout engine
+                     * doesn't recalculate after frame stripping + reparent.
+                     * SendMessage(WM_SIZE) synchronously delivers real dimensions,
+                     * forcing OneNote to resize its content area. */
+                    RECT rcBefore, rcAfter;
+                    LRESULT smr;
+                    GetWindowRect(targetHwnd, &rcBefore);
+                    fprintf(stderr, "REPOS-REP: FIRST before=%ld,%ld %ldx%ld target=%dx%d\n",
+                            rcBefore.left, rcBefore.top,
+                            rcBefore.right - rcBefore.left, rcBefore.bottom - rcBefore.top,
+                            w, h);
+                    smr = SendMessage(targetHwnd, WM_SIZE, SIZE_RESTORED,
+                                      MAKELPARAM(w, h));
+                    GetWindowRect(targetHwnd, &rcAfter);
+                    fprintf(stderr, "REPOS-REP: WM_SIZE ret=%lld after=%ld,%ld %ldx%ld\n",
+                            (long long)smr,
+                            rcAfter.left, rcAfter.top,
+                            rcAfter.right - rcAfter.left, rcAfter.bottom - rcAfter.top);
+                } else {
+                    fprintf(stderr, "REPOS-REP: RESIZE %d→%d, %d→%d\n",
+                            g_lastW, w, g_lastH, h);
+                }
                 SetWindowPos(targetHwnd, NULL, 0, 0, w, h,
                              SWP_NOACTIVATE | SWP_NOZORDER);
             }
