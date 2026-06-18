@@ -258,6 +258,30 @@
   background-color: var(--background-modifier-hover);
 }
 
+.onenote-page-insert-btn {
+  display: none;
+  align-items: center;
+  color: var(--text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 2px;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+}
+
+.onenote-page-insert-btn:hover {
+  color: var(--text-accent);
+}
+
+.onenote-page-item:hover .onenote-page-insert-btn {
+  display: flex;
+}
+
+.onenote-page-insert-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
 .onenote-item-date {
   font-size: 0.75em;
   color: var(--text-faint);

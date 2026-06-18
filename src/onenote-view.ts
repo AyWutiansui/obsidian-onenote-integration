@@ -12,6 +12,7 @@ export class OneNoteEmbedView extends ItemView {
   private currentSectionName: string = '';
   private currentPageName: string = '';
   private contentDiv: HTMLElement | null = null;
+  private searchInput: HTMLInputElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: OneNoteIntegrationPlugin) {
     super(leaf);
@@ -69,12 +70,31 @@ export class OneNoteEmbedView extends ItemView {
     // Create search bar
     const searchDiv = container.createDiv({ cls: 'onenote-search-bar' });
     let searchTimeout: ReturnType<typeof setTimeout> | null = null;
-    new TextComponent(searchDiv)
+    const searchComp = new TextComponent(searchDiv)
       .setPlaceholder('Search notebooks, sections, pages...')
       .onChange((query) => {
         if (searchTimeout) clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => this.performSearch(query, this.contentDiv!), 200);
       });
+    this.searchInput = searchComp.inputEl;
+
+    // Escape to clear search and restore current view
+    this.searchInput.addEventListener('keydown', (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        this.searchInput!.value = '';
+        this.searchInput!.blur();
+        this.performSearch('', this.contentDiv!);
+      }
+    });
+
+    // Ctrl+F / Cmd+F to focus search bar
+    container.addEventListener('keydown', (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        this.searchInput?.focus();
+        this.searchInput?.select();
+      }
+    });
 
     // Create content area
     this.contentDiv = container.createDiv({ cls: 'onenote-content' });
@@ -121,6 +141,25 @@ export class OneNoteEmbedView extends ItemView {
     return loadingDiv;
   }
 
+  /** Update search bar placeholder to reflect current navigation context. */
+  private updateSearchPlaceholder(): void {
+    if (!this.searchInput) return;
+    if (this.currentSection && this.currentSectionName) {
+      this.searchInput.placeholder = `Search in "${this.currentSectionName}"...`;
+    } else if (this.currentNotebook && this.currentNotebookName) {
+      this.searchInput.placeholder = `Search in "${this.currentNotebookName}"...`;
+    } else {
+      this.searchInput.placeholder = 'Search notebooks, sections, pages...';
+    }
+  }
+
+  /** Clear the search input when navigating via breadcrumbs. */
+  private clearSearch(): void {
+    if (this.searchInput) {
+      this.searchInput.value = '';
+    }
+  }
+
   /** Make a non-button element keyboard-accessible and screen-reader friendly. */
   private makeClickable(el: HTMLElement, onClick: () => void | Promise<void>, label?: string): void {
     el.setAttribute('role', 'button');
@@ -161,6 +200,7 @@ export class OneNoteEmbedView extends ItemView {
     setIcon(rootIcon, 'book-open');
     root.appendText(' Notebooks');
     this.makeClickable(root, () => {
+      this.clearSearch();
       this.currentNotebook = null;
       this.currentNotebookName = '';
       this.currentSection = null;
@@ -176,6 +216,7 @@ export class OneNoteEmbedView extends ItemView {
       nb.textContent = this.currentNotebookName;
       this.makeClickable(nb, () => {
         if (this.currentNotebook) {
+          this.clearSearch();
           this.currentSection = null;
           this.currentSectionName = '';
           this.currentPage = null;
@@ -191,6 +232,7 @@ export class OneNoteEmbedView extends ItemView {
       sec.textContent = this.currentSectionName;
       this.makeClickable(sec, () => {
         if (this.currentSection) {
+          this.clearSearch();
           this.currentPage = null;
           this.currentPageName = '';
           this.loadPages(this.currentSection, this.contentDiv!);
@@ -204,12 +246,18 @@ export class OneNoteEmbedView extends ItemView {
     }
   }
 
-  /** Search the hierarchy cache and render matching items. */
+  /** Search the hierarchy cache and render matching items. Scoped to current notebook/section if selected. */
   private performSearch(query: string, container: HTMLElement): void {
     const trimmed = query.trim().toLowerCase();
     if (!trimmed) {
-      // Empty query: reload normal notebook view
-      this.loadNotebooks(container);
+      // Empty query: restore the appropriate view based on current context
+      if (this.currentSection) {
+        this.loadPages(this.currentSection, container);
+      } else if (this.currentNotebook) {
+        this.loadSections(this.currentNotebook, container);
+      } else {
+        this.loadNotebooks(container);
+      }
       return;
     }
 
@@ -218,19 +266,36 @@ export class OneNoteEmbedView extends ItemView {
     const service = this.plugin.getOneNoteLocalService();
     if (!service) return;
 
+    // Determine search scope label
+    let scopeLabel = '';
+    if (this.currentSection && this.currentSectionName) {
+      scopeLabel = ` in "${this.currentSectionName}"`;
+    } else if (this.currentNotebook && this.currentNotebookName) {
+      scopeLabel = ` in "${this.currentNotebookName}"`;
+    }
+
     // Access cached hierarchy via getNotebooks (returns from cache if fresh)
     service.getNotebooks().then(notebooks => {
       container.empty();
-      container.createEl('h3', { text: `Search results for "${query.trim()}"` });
+      container.createEl('h3', { text: `Search results for "${query.trim()}"${scopeLabel}` });
 
       let resultCount = 0;
       const resultsDiv = container.createDiv({ cls: 'onenote-search-results' });
 
-      for (const nb of notebooks) {
-        const nbMatch = nb.name.toLowerCase().includes(trimmed);
+      // Scope the search based on current context
+      const scopedNotebooks = this.currentNotebook
+        ? notebooks.filter(nb => nb.id === this.currentNotebook)
+        : notebooks;
 
-        for (const sec of (nb.sections || [])) {
-          const secMatch = sec.name.toLowerCase().includes(trimmed);
+      for (const nb of scopedNotebooks) {
+        const nbMatch = !this.currentNotebook && nb.name.toLowerCase().includes(trimmed);
+
+        const scopedSections = this.currentSection
+          ? (nb.sections || []).filter(sec => sec.id === this.currentSection)
+          : (nb.sections || []);
+
+        for (const sec of scopedSections) {
+          const secMatch = !this.currentSection && sec.name.toLowerCase().includes(trimmed);
 
           for (const page of (sec.pages || [])) {
             const pageTitle = page.title || 'Untitled Page';
@@ -271,7 +336,9 @@ export class OneNoteEmbedView extends ItemView {
         setIcon(noIcon, 'search-x');
         noResult.createEl('p', { text: 'No matching pages found.' });
         noResult.createEl('p', {
-          text: 'Try a different search term, or clear the search to browse all notebooks.',
+          text: scopeLabel
+            ? 'Try a different search term, clear the search, or navigate to a different level to search more broadly.'
+            : 'Try a different search term, or clear the search to browse all notebooks.',
           cls: 'onenote-hint-text'
         });
       }
@@ -284,6 +351,7 @@ export class OneNoteEmbedView extends ItemView {
   }
 
   async loadNotebooks(container: HTMLElement) {
+    this.updateSearchPlaceholder();
     const service = this.plugin.getOneNoteLocalService();
     if (!service) {
       container.createEl('p', {
@@ -428,6 +496,7 @@ export class OneNoteEmbedView extends ItemView {
   }
 
   async loadSections(notebookId: string, container: HTMLElement) {
+    this.updateSearchPlaceholder();
     const service = this.plugin.getOneNoteLocalService();
     if (!service) return;
 
@@ -481,6 +550,7 @@ export class OneNoteEmbedView extends ItemView {
   }
 
   async loadPages(sectionId: string, container: HTMLElement) {
+    this.updateSearchPlaceholder();
     const service = this.plugin.getOneNoteLocalService();
     if (!service) return;
 
@@ -528,6 +598,25 @@ export class OneNoteEmbedView extends ItemView {
         setIcon(pageIcon, 'file-text');
         pageItem.createSpan({ text: page.title || 'Untitled Page', cls: 'onenote-item-label' });
 
+        // Insert button — inserts a ```onenote code block at cursor
+        const insertBtn = pageItem.createSpan({ cls: 'onenote-page-insert-btn' });
+        setIcon(insertBtn, 'plus-circle');
+        insertBtn.setAttribute('title', 'Insert into current note');
+        insertBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const cleanId = page.id.replace(/\s+/g, '');
+          const title = page.title || 'Untitled Page';
+          const codeBlock = '```onenote\n' + cleanId + '\n' + title + '\n```\n';
+          const leaf = this.plugin.app.workspace.getMostRecentLeaf();
+          if (leaf && 'view' in leaf && (leaf.view as any)?.editor) {
+            const editor = (leaf.view as any).editor;
+            editor.replaceSelection(codeBlock);
+            new Notice(`Inserted "${title}" into note`);
+          } else {
+            new Notice('No active editor found. Open a note first.');
+          }
+        });
+
         if (page.lastModifiedTime) {
           const dateSpan = pageItem.createSpan({ cls: 'onenote-item-date' });
           try {
@@ -572,6 +661,19 @@ export class OneNoteEmbedView extends ItemView {
         .setClass('mod-cta')
         .onClick(async () => {
           await service?.openPageInOneNote(page.id);
+        });
+
+      new ButtonComponent(actions)
+        .setIcon('link')
+        .setButtonText('Copy Link')
+        .setTooltip('Copy OneNote page link to clipboard')
+        .onClick(() => {
+          const cleanId = page.id.replace(/\s+/g, '');
+          const url = `onenote:${cleanId}`;
+          navigator.clipboard.writeText(url).then(
+            () => new Notice('Page link copied to clipboard'),
+            () => new Notice('Failed to copy link')
+          );
         });
     }
 
