@@ -216,6 +216,13 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
     SetWindowLong(targetHwnd, GWL_STYLE, newStyle);
     SetWindowPos(targetHwnd, NULL, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
+    /* Force OneNote to recalculate its internal layout for the new frameless style.
+     * Without WM_SIZE, OneNote's rendering area stays at the old (framed) dimensions
+     * even though the outer window size is correct. This is why manual resize after
+     * detach "fixes" the issue — it triggers WM_SIZE naturally. */
+    PostMessage(targetHwnd, WM_SIZE, SIZE_RESTORED, 0);
+
     ShowWindow(targetHwnd, SW_SHOW);
     return 0;  /* 0 = position-only mode (not an error) */
 }
