@@ -1,37 +1,211 @@
 /* ===== Embed Container (code block live embed) ===== */
 .onenote-embed-container {
   width: 100%;
-  padding: 16px;
+  padding: 0;
   min-height: 200px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
+  border-radius: 8px;
   background-color: var(--background-secondary);
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: box-shadow 0.2s ease;
+}
+
+.onenote-embed-container:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* ===== Title Bar ===== */
+.onenote-page-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--background-secondary-alt, var(--background-secondary));
+  border-bottom: 1px solid var(--background-modifier-border);
+  position: relative;
+}
+
+.onenote-page-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--interactive-accent);
+  border-radius: 3px 0 0 0;
+}
+
+.onenote-page-title .onenote-item-icon {
+  color: var(--interactive-accent);
+}
+
+.onenote-page-title > span {
+  font-weight: 600;
+  font-size: 0.9em;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== Live Embed Wrapper ===== */
+.onenote-embed-wrapper {
+  padding: 12px 16px;
 }
 
 .onenote-embed-live {
   width: 100%;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 4px;
+  border-radius: 6px;
   position: relative;
   overflow: hidden;
   background: var(--background-primary);
 }
 
+/* ===== Embed Toolbar (in title bar) ===== */
+.onenote-embed-toolbar {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.onenote-embed-toolbar-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+
+.onenote-embed-toolbar-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.onenote-embed-toolbar-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.onenote-embed-toolbar-sep {
+  width: 1px;
+  margin: 4px 2px;
+  background: var(--background-modifier-border);
+}
+
+/* ===== Embed Status Overlay ===== */
 .onenote-embed-status {
-  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 20px;
   text-align: center;
   color: var(--text-muted);
+  font-size: 0.9em;
 }
 
 .onenote-embed-status--error {
   color: var(--text-error);
 }
 
-/* ===== Button Area (code block embed) ===== */
-.onenote-embed-actions {
-  margin-top: 8px;
+/* ===== Resize Handle ===== */
+.onenote-resize-handle {
+  height: 8px;
+  cursor: ns-resize;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 16px 8px;
+  border-radius: 4px;
+  transition: background-color 0.15s ease;
+}
+
+.onenote-resize-handle:hover {
+  background: var(--background-modifier-hover);
+}
+
+.onenote-resize-handle::after {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  transition: background-color 0.15s ease;
+}
+
+.onenote-resize-handle:hover::after {
+  background: var(--text-faint);
+}
+
+/* ===== Detached Placeholder ===== */
+.onenote-embed-detached {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   gap: 8px;
+  padding: 32px 16px;
+  color: var(--text-faint);
+  font-size: 0.9em;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 6px;
+  margin: 0 16px 12px;
+}
+
+.onenote-embed-detached svg {
+  width: 24px;
+  height: 24px;
+  opacity: 0.5;
+}
+
+/* ===== Loading Skeleton ===== */
+.onenote-skeleton {
+  padding: 12px 16px;
+}
+
+.onenote-skeleton-bar {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg,
+    var(--background-modifier-hover) 25%,
+    var(--background-secondary) 50%,
+    var(--background-modifier-hover) 75%);
+  background-size: 200% 100%;
+  animation: onenote-shimmer 1.5s ease-in-out infinite;
+  margin-bottom: 8px;
+}
+
+.onenote-skeleton-bar:nth-child(2) { width: 75%; }
+.onenote-skeleton-bar:nth-child(3) { width: 50%; }
+
+.onenote-skeleton-block {
+  height: 200px;
+  border-radius: 6px;
+  margin-top: 8px;
+  background: linear-gradient(90deg,
+    var(--background-modifier-hover) 25%,
+    var(--background-secondary) 50%,
+    var(--background-modifier-hover) 75%);
+  background-size: 200% 100%;
+  animation: onenote-shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes onenote-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .onenote-iframe {
@@ -40,28 +214,13 @@
   border: none;
 }
 
-/* ===== Page Title Bar ===== */
-.onenote-page-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--background-modifier-border);
-}
-
-.onenote-page-title span {
-  font-weight: 600;
-}
-
-/* ===== Button Area ===== */
+/* ===== Handwritten Content ===== */
 .onenote-handwritten-actions {
   margin-top: 8px;
   display: flex;
   gap: 8px;
 }
 
-/* ===== Handwritten Content Notice ===== */
 .onenote-handwritten-placeholder {
   padding: 16px;
   text-align: center;
@@ -125,7 +284,6 @@
   flex: 1;
 }
 
-/* Fade-in animation for content transitions */
 .onenote-content > * {
   animation: onenote-fadein 0.15s ease-out;
 }
@@ -190,7 +348,7 @@
   padding: 0 1px;
 }
 
-/* List items — unified style for notebook/section/page items in sidebar */
+/* List items */
 .onenote-list-item {
   padding: 8px;
   margin-bottom: 4px;
@@ -293,30 +451,63 @@
 .onenote-page-selector-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: 10px;
+  padding: 14px 16px;
+  font-weight: 500;
+  font-size: 0.9em;
+  background: var(--background-secondary-alt, var(--background-secondary));
+  border-bottom: 1px solid var(--background-modifier-border);
+  position: relative;
+}
+
+.onenote-page-selector-header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--text-accent);
+  border-radius: 3px 0 0 0;
+}
+
+.onenote-page-selector-header .onenote-item-icon {
+  color: var(--text-accent);
 }
 
 .onenote-page-selector-controls {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  padding: 14px 16px;
 }
 
 .onenote-page-selector-label {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
   color: var(--text-muted);
   display: flex;
   align-items: center;
   gap: 4px;
+  margin-bottom: 2px;
 }
 
 .onenote-page-selector-select {
   width: 100%;
-  padding: 8px;
-  border-radius: 4px;
+  padding: 8px 12px;
+  border-radius: 6px;
   border: 1px solid var(--background-modifier-border);
   background: var(--background-primary);
+  font-size: 1em;
+  min-height: 36px;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.onenote-page-selector-select:focus {
+  border-color: var(--interactive-accent);
 }
 
 .onenote-page-selector-buttons {
@@ -335,7 +526,7 @@
   padding: 15px;
   background-color: var(--background-modifier-error);
   border-radius: 6px;
-  margin: 10px 0;
+  margin: 10px 16px;
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -344,7 +535,7 @@
 
 .onenote-error-title {
   margin-top: 0;
-  color: inherit; /* inherits from parent error-message or warning context */
+  color: inherit;
 }
 
 .onenote-error-title--warning {
@@ -394,7 +585,6 @@
   color: var(--text-muted);
 }
 
-/* ===== Loading Spinner ===== */
 .onenote-spinner {
   display: inline-block;
   width: 16px;
@@ -450,14 +640,12 @@
   height: 14px;
 }
 
-/* ===== Page Actions ===== */
 .onenote-page-actions {
   display: flex;
   gap: 8px;
   padding: 8px 0;
 }
 
-/* ===== Sidebar List Containers ===== */
 .onenote-notebook-list,
 .onenote-section-list {
   display: flex;
@@ -465,7 +653,6 @@
   gap: 4px;
 }
 
-/* ===== Accessibility: keyboard focus indicator ===== */
 [role="button"]:focus-visible,
 .onenote-breadcrumb-item:focus-visible {
   outline: 2px solid var(--text-accent);
@@ -473,23 +660,22 @@
   border-radius: 4px;
 }
 
-/* ===== Responsive: narrow sidebar ===== */
 @media (max-width: 300px) {
   .onenote-header {
     padding: 6px;
     gap: 4px;
   }
-
   .onenote-header .onenote-platform-info {
     display: none;
   }
-
   .onenote-list-item,
   .onenote-page-item {
     padding: 6px;
   }
-
-  .onenote-embed-container {
+  .onenote-embed-wrapper {
+    padding: 8px 10px;
+  }
+  .onenote-page-selector-controls {
     padding: 10px;
   }
 }

@@ -47,11 +47,12 @@ export class OneNoteCodeBlockRenderer {
         return;
       }
 
-      // Show loading
-      const loadingDiv = container.createDiv({ cls: 'onenote-loading' });
-      const spinner = loadingDiv.createSpan({ cls: 'onenote-spinner' });
-      spinner.textContent = '';
-      loadingDiv.createSpan({ text: ' Loading OneNote content...' });
+      // Show skeleton loading
+      const loadingDiv = container.createDiv({ cls: 'onenote-skeleton' });
+      loadingDiv.createDiv({ cls: 'onenote-skeleton-bar' });
+      loadingDiv.createDiv({ cls: 'onenote-skeleton-bar' });
+      loadingDiv.createDiv({ cls: 'onenote-skeleton-bar' });
+      loadingDiv.createDiv({ cls: 'onenote-skeleton-block' });
 
       try {
         const { pageId, pageTitle } = parseCodeBlockSource(source);
@@ -61,6 +62,12 @@ export class OneNoteCodeBlockRenderer {
           const titleBar = container.createDiv({ cls: 'onenote-page-title' });
           setIcon(titleBar, 'file-text');
           titleBar.createSpan({ text: pageTitle || 'OneNote Page' });
+
+          // Detach/Attach button — right side of title bar, with margin to avoid Obsidian's edit block button
+          const toolbarDetachBtn = titleBar.createEl('button', { cls: 'onenote-embed-toolbar-btn', attr: { 'aria-label': 'Detach window', title: 'Detach window' } });
+          setIcon(toolbarDetachBtn, 'maximize-2');
+          toolbarDetachBtn.style.marginLeft = 'auto';
+          toolbarDetachBtn.style.marginRight = '36px';
 
           // Live window embed (local mode)
           let cleanupEmbed: (() => Promise<void>) | null = null;
@@ -74,40 +81,42 @@ export class OneNoteCodeBlockRenderer {
 
           loadingDiv.remove();
 
-          // Create embed container
-          const embedContainer = container.createDiv({ cls: 'onenote-embed-live' });
+          // Create embed wrapper (padding around the live embed area)
+          const embedWrapper = container.createDiv({ cls: 'onenote-embed-wrapper' });
 
-          // Calculate height based on embedContainer's actual width (accounts for container padding)
+          // Create embed container
+          const embedContainer = embedWrapper.createDiv({ cls: 'onenote-embed-live' });
+
+          // Calculate height based on embedContainer's actual width
           const actualWidth = embedContainer.clientWidth || el.clientWidth || 800;
           const aspectRatio = this.plugin.settings.embedAspectRatio || 2 / 3;
-          const embedHeight = Math.max(400, Math.min(1200, Math.round(actualWidth * aspectRatio)));
+          let embedHeight = Math.max(400, Math.min(1200, Math.round(actualWidth * aspectRatio)));
           embedContainer.style.height = `${embedHeight}px`;
 
-          // Detach/Attach toggle button — created early so we can measure overhead
-          const btnContainer = container.createDiv({ cls: 'onenote-embed-actions' });
+          // Resize handle
+          const resizeHandle = container.createDiv({ cls: 'onenote-resize-handle' });
+
+          // Detached placeholder (hidden initially)
+          const detachedPlaceholder = container.createDiv({ cls: 'onenote-embed-detached' });
+          detachedPlaceholder.style.display = 'none';
+          const detachIcon = detachedPlaceholder.createSpan();
+          setIcon(detachIcon, 'monitor-off');
+          detachedPlaceholder.createSpan({ text: 'OneNote window detached' });
 
           let isAttached = true;
           let isTransitioning = false;
 
-          const actionBtn = btnContainer.createEl('button', {
-            text: 'Detach OneNote Window',
-            cls: 'mod-cta'
-          });
-
-          // Calculate non-embed overhead explicitly from child elements.
-          // We cannot use container.offsetHeight - embedContainer.offsetHeight because
-          // Obsidian's CSS max-height may still constrain the container before we set its height.
+          // Calculate non-embed overhead for height tracking.
+          // Wrapper padding + embed border + title bar + resize handle
+          const wrapperStyle = getComputedStyle(embedWrapper);
+          const wrapperPadTop = parseFloat(wrapperStyle.paddingTop) || 0;
+          const wrapperPadBot = parseFloat(wrapperStyle.paddingBottom) || 0;
           const titleHeight = titleBar.offsetHeight;
-          const titleMarginBottom = parseInt(getComputedStyle(titleBar).marginBottom) || 0;
-          const btnHeight = btnContainer.offsetHeight;
-          const btnMarginTop = parseInt(getComputedStyle(btnContainer).marginTop) || 0;
+          const resizeHeight = resizeHandle.offsetHeight + 8; // height + margin
           const embedBorderTop = parseInt(getComputedStyle(embedContainer).borderTopWidth) || 0;
           const embedBorderBottom = parseInt(getComputedStyle(embedContainer).borderBottomWidth) || 0;
-          // Container padding (16px top + 16px bottom) + border (1px top + 1px bottom)
-          const containerPadding = 32;
-          const containerBorder = 2;
-          const overhead = titleHeight + titleMarginBottom + btnMarginTop + btnHeight
-            + embedBorderTop + embedBorderBottom + containerPadding + containerBorder;
+          const overhead = Math.round(titleHeight + wrapperPadTop + wrapperPadBot + resizeHeight
+            + embedBorderTop + embedBorderBottom);
           container.style.height = `${embedHeight + overhead}px`;
 
           const statusDiv = embedContainer.createDiv({ cls: 'onenote-embed-status' });
@@ -153,6 +162,8 @@ export class OneNoteCodeBlockRenderer {
             }
 
             cleanupEmbed = async () => {
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
               await doDetach();
               cleanupEmbed = null;
               cleanupChild.setCleanup(() => {});
@@ -179,43 +190,73 @@ export class OneNoteCodeBlockRenderer {
               currentTracker.dispose();
               currentTracker = null;
             }
-            
+
             // End embed session
             localService.endEmbedSession(currentSessionId);
-            
+
             // Detach window via embed manager
-            try { 
-              await localService.detachOneNoteWindow(); 
+            try {
+              await localService.detachOneNoteWindow();
             } catch (err) {
               console.warn('[OneNote] detachOneNoteWindow error:', err);
             }
-            
-            // Hide embed container
-            embedContainer.style.height = '0px';
-            container.style.height = `${overhead}px`;
-            
+
+            // Hide embed wrapper, show detached placeholder
+            embedWrapper.style.display = 'none';
+            detachedPlaceholder.style.display = '';
+
+            // Recalculate container height without embed
+            container.style.height = '';
+
             // Update UI
-            actionBtn.textContent = 'Attach OneNote Window';
-            actionBtn.classList.remove('mod-cta');
+            toolbarDetachBtn.setAttribute('title', 'Attach window');
+            setIcon(toolbarDetachBtn, 'minimize-2');
             isAttached = false;
           };
-          
+
           const doAttach = async () => {
-            actionBtn.textContent = 'Attaching...';
-            actionBtn.disabled = true;
-            
+            // Set heights before showing wrapper to avoid aspect ratio flicker
+            embedContainer.style.height = `${embedHeight}px`;
+            container.style.height = `${embedHeight + overhead}px`;
+
+            // Show embedding status indicator
+            detachedPlaceholder.style.display = 'none';
+            embedWrapper.style.display = '';
+            embedContainer.empty();
+            const statusDiv = embedContainer.createDiv({ cls: 'onenote-embed-status' });
+            statusDiv.textContent = 'Embedding OneNote window...';
+
             try {
               // Ensure clean state before re-attaching
               if (localService.isActiveEmbedSession(currentSessionId)) {
                 localService.endEmbedSession(currentSessionId);
               }
-              
+
               // Start new embed session
               const newSessionId = localService.beginEmbedSession();
               currentSessionId = newSessionId;
-              
-              // Embed OneNote window
-              const hwnd = await localService.embedOneNoteWindow(pageId);
+
+              // Embed OneNote window (with cold-start fallback)
+              let hwnd: string;
+              try {
+                hwnd = await localService.embedOneNoteWindow(pageId);
+              } catch (firstError: any) {
+                // Cold start fallback: the first attempt's COM call already triggered
+                // OneNote to start. Give it more time to fully load, then retry.
+                console.warn('[OneNote Embed] First embed failed, cold start retry:', firstError.message);
+                statusDiv.textContent = 'Starting OneNote... (this may take a moment)';
+                try { this.openInOneNoteLocal(pageId); } catch {}
+                await new Promise(r => setTimeout(r, 20000));
+                statusDiv.textContent = 'Embedding OneNote window...';
+                hwnd = await localService.embedOneNoteWindow(pageId);
+              }
+
+              // Success — clear status
+              statusDiv.remove();
+
+              // Show embed wrapper, hide detached placeholder
+              embedWrapper.style.display = '';
+              detachedPlaceholder.style.display = 'none';
 
               // Position tracking version doesn't need reparenting
               // Create new coordinate tracker
@@ -224,37 +265,40 @@ export class OneNoteCodeBlockRenderer {
                 localService.repositionOneNoteWindow(x, y, w, h);
               }, aspectRatio, container, overhead);
               currentTracker = tracker;
-              
+
               // Set up cleanup for this attachment
               cleanupEmbed = async () => {
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
                 await doDetach();
                 cleanupEmbed = null;
                 cleanupChild.setCleanup(() => {});
               };
               cleanupChild.setCleanup(cleanupEmbed);
-              
+
               // Show embed container with calculated height
               embedContainer.style.height = `${embedHeight}px`;
               container.style.height = `${embedHeight + overhead}px`;
-              
+
               // Update UI
-              actionBtn.textContent = 'Detach OneNote Window';
-              actionBtn.classList.add('mod-cta');
+              toolbarDetachBtn.setAttribute('title', 'Detach window');
+              setIcon(toolbarDetachBtn, 'maximize-2');
               isAttached = true;
-              actionBtn.disabled = false;
               new Notice('OneNote window re-attached');
             } catch (error: any) {
               console.error('[OneNote Embed] Re-attach failed:', error);
-              actionBtn.textContent = 'Attach OneNote Window';
-              actionBtn.disabled = false;
-              new Notice(`Failed to re-attach: ${error.message}`);
+              statusDiv.empty();
+              const errIcon = statusDiv.createSpan({ cls: 'onenote-item-icon' });
+              setIcon(errIcon, 'alert-circle');
+              statusDiv.createSpan({ text: `Failed to re-attach: ${error.message}` });
+              statusDiv.addClass('onenote-embed-status--error');
             }
           };
-          
-          actionBtn.addEventListener('click', async () => {
+
+          // Wire toolbar detach button
+          toolbarDetachBtn.addEventListener('click', async () => {
             if (isTransitioning) return;
             isTransitioning = true;
-            actionBtn.disabled = true;
             try {
               if (isAttached) {
                 await doDetach();
@@ -264,9 +308,44 @@ export class OneNoteCodeBlockRenderer {
               }
             } finally {
               isTransitioning = false;
-              actionBtn.disabled = false;
             }
           });
+
+          // Resize handle drag logic
+          let isResizing = false;
+          let startY = 0;
+          let startHeight = 0;
+
+          resizeHandle.addEventListener('mousedown', (e: MouseEvent) => {
+            if (!isAttached) return;
+            isResizing = true;
+            startY = e.clientY;
+            startHeight = embedContainer.offsetHeight;
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+            e.preventDefault();
+          });
+
+          const onMouseMove = (e: MouseEvent) => {
+            if (!isResizing) return;
+            const delta = e.clientY - startY;
+            const newHeight = Math.max(200, Math.min(1600, startHeight + delta));
+            embedContainer.style.height = `${newHeight}px`;
+            container.style.height = `${newHeight + overhead}px`;
+          };
+
+          const onMouseUp = () => {
+            if (!isResizing) return;
+            isResizing = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            // Save new height for this session
+            embedHeight = embedContainer.offsetHeight;
+            if (currentTracker) currentTracker.forceUpdate();
+          };
+
+          document.addEventListener('mousemove', onMouseMove);
+          document.addEventListener('mouseup', onMouseUp);
         } else {
           // No page ID - show page selector
           loadingDiv.remove();

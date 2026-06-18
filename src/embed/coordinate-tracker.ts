@@ -236,17 +236,31 @@ export class CoordinateTracker {
     const rect = this._container.getBoundingClientRect();
     const currentDpr = window.devicePixelRatio || 1;
 
+    // Read border widths early — needed for both sync height and native window sizing.
+    // getBoundingClientRect returns border-box (outer) dimensions; native window must
+    // use inner dimensions (without borders) to avoid overflow.
+    if (this._cachedBorderWidth < 0 || Math.round(rect.width) !== this._cachedBorderWidth) {
+      const style = getComputedStyle(this._container);
+      this._cachedBorderLeft = parseFloat(style.borderLeftWidth) || 0;
+      this._cachedBorderTop = parseFloat(style.borderTopWidth) || 0;
+      this._cachedBorderRight = parseFloat(style.borderRightWidth) || 0;
+      this._cachedBorderWidth = Math.round(rect.width);
+    }
+    const innerCssWidth = rect.width - this._cachedBorderLeft - this._cachedBorderRight;
+
     // Sync container heights on every update — fixes initial render timing
     // issue where clientWidth wasn't ready. Runs before all early-return paths.
-    const containerCssWidth = rect.width;
-    const syncedHeight = Math.max(400, Math.min(1200, Math.round(containerCssWidth * this._aspectRatio)));
-    const heightStr = `${syncedHeight}px`;
+    // Use inner width (without borders) to match native window height calculation.
+    // syncedHeight = total card height (embed area + overhead for title/padding/resize)
+    const syncedHeight = Math.max(400, Math.min(1200, Math.round(innerCssWidth * this._aspectRatio)));
+    const embedCssHeight = Math.max(200, syncedHeight - this._hostExtraHeight);
+    const heightStr = `${embedCssHeight}px`;
     if (this._container.style.height !== heightStr) {
       this._container.style.height = heightStr;
     }
-    // Set outer host container height = embed height + overhead (title bar, buttons, padding)
+    // Set outer host container height = total card height (embed + overhead)
     if (this._hostContainer) {
-      const hostHeightStr = `${syncedHeight + this._hostExtraHeight}px`;
+      const hostHeightStr = `${syncedHeight}px`;
       if (this._hostContainer.style.height !== hostHeightStr) {
         this._hostContainer.style.height = hostHeightStr;
         this._hostContainer.style.setProperty('max-height', 'none', 'important');
@@ -307,18 +321,6 @@ export class CoordinateTracker {
     }
 
     // Convert CSS pixels to physical pixels (Win32 API uses physical pixels)
-    // currentDpr already defined at top of update()
-
-    // Account for border width: getBoundingClientRect() returns outer border edge,
-    // but OneNote should align to the inner content area (inside the border).
-    // Borders rarely change — only re-read when container width differs from cached value.
-    if (this._cachedBorderWidth < 0 || Math.round(rect.width) !== this._cachedBorderWidth) {
-      const style = getComputedStyle(this._container);
-      this._cachedBorderLeft = parseFloat(style.borderLeftWidth) || 0;
-      this._cachedBorderTop = parseFloat(style.borderTopWidth) || 0;
-      this._cachedBorderRight = parseFloat(style.borderRightWidth) || 0;
-      this._cachedBorderWidth = Math.round(rect.width);
-    }
     const borderLeft = this._cachedBorderLeft;
     const borderTop = this._cachedBorderTop;
     const borderRight = this._cachedBorderRight;
@@ -327,12 +329,11 @@ export class CoordinateTracker {
     // Offset inward by border width, reduce width by left+right borders
     const physLeft = Math.round((rect.left + borderLeft) * currentDpr);
     const physTop = Math.round((rect.top + borderTop) * currentDpr);
-    const cssWidth = rect.width - borderLeft - borderRight;
-    const physWidth = Math.round(cssWidth * currentDpr);
+    const physWidth = Math.round(innerCssWidth * currentDpr);
 
-    // Height: match embedContainer's CSS pixel calculation, then convert to physical pixels
-    // embedContainer height = clamp(cssWidth * aspectRatio, 400, 1200) in CSS pixels
-    const embedHeightCss = Math.max(400, Math.min(1200, Math.round(cssWidth * this._aspectRatio)));
+    // Height: match embedContainer's CSS pixel height (already reduced by overhead),
+    // then convert to physical pixels for the Win32 API
+    const embedHeightCss = embedCssHeight;
     const embedHeight = Math.round(embedHeightCss * currentDpr);
     const oneNoteTop = physTop + offset.y;
     const oneNoteBottom = oneNoteTop + embedHeight;
