@@ -67,6 +67,7 @@ export class CoordinateTracker {
   private _cachedBorderLeft: number = 0;
   private _cachedBorderTop: number = 0;
   private _cachedBorderRight: number = 0;
+  private _cachedBorderBottom: number = 0;
   private _cachedBorderWidth: number = -1;  // container width when borders were last read
   private _aspectRatio: number;
   private _hostContainer: HTMLElement | null;
@@ -244,23 +245,21 @@ export class CoordinateTracker {
       this._cachedBorderLeft = parseFloat(style.borderLeftWidth) || 0;
       this._cachedBorderTop = parseFloat(style.borderTopWidth) || 0;
       this._cachedBorderRight = parseFloat(style.borderRightWidth) || 0;
+      this._cachedBorderBottom = parseFloat(style.borderBottomWidth) || 0;
       this._cachedBorderWidth = Math.round(rect.width);
     }
     const innerCssWidth = rect.width - this._cachedBorderLeft - this._cachedBorderRight;
 
-    // Sync container heights on every update — fixes initial render timing
-    // issue where clientWidth wasn't ready. Runs before all early-return paths.
-    // Use inner width (without borders) to match native window height calculation.
-    // syncedHeight = total card height (embed area + overhead for title/padding/resize)
-    const syncedHeight = Math.max(400, Math.min(1200, Math.round(innerCssWidth * this._aspectRatio)));
-    const embedCssHeight = Math.max(200, syncedHeight - this._hostExtraHeight);
-    const heightStr = `${embedCssHeight}px`;
-    if (this._container.style.height !== heightStr) {
-      this._container.style.height = heightStr;
-    }
-    // Set outer host container height = total card height (embed + overhead)
+    // Read embed container's actual rendered height (border-box from getBoundingClientRect).
+    // This guarantees the native window height always matches the CSS embed area exactly.
+    // The code block manages the embed container's style.height; we just read it.
+    const embedBorderBoxHeight = rect.height;
+    const embedCssHeight = embedBorderBoxHeight - this._cachedBorderTop - this._cachedBorderBottom;
+
+    // Set host container height to match total card height (embed + overhead)
     if (this._hostContainer) {
-      const hostHeightStr = `${syncedHeight}px`;
+      const hostHeight = embedCssHeight + this._hostExtraHeight;
+      const hostHeightStr = `${hostHeight}px`;
       if (this._hostContainer.style.height !== hostHeightStr) {
         this._hostContainer.style.height = hostHeightStr;
         this._hostContainer.style.setProperty('max-height', 'none', 'important');

@@ -47,6 +47,16 @@ export class OneNoteCodeBlockRenderer {
         return;
       }
 
+      // Pre-calculate container height to maintain correct aspect ratio during skeleton loading.
+      // Uses container.clientWidth (stable, always visible) for width estimation.
+      // Embed container will be narrower than the container by wrapper padding + embed borders.
+      {
+        const estimatedEmbedWidth = Math.max(200, (container.clientWidth || 800) - 34);
+        const preRatio = this.plugin.settings.embedAspectRatio || 2 / 3;
+        const preHeight = Math.max(400, Math.min(1200, Math.round(estimatedEmbedWidth * preRatio)));
+        container.style.setProperty('height', `${preHeight + 83}px`, 'important');
+      }
+
       // Show skeleton loading
       const loadingDiv = container.createDiv({ cls: 'onenote-skeleton' });
       loadingDiv.createDiv({ cls: 'onenote-skeleton-bar' });
@@ -87,12 +97,6 @@ export class OneNoteCodeBlockRenderer {
           // Create embed container
           const embedContainer = embedWrapper.createDiv({ cls: 'onenote-embed-live' });
 
-          // Calculate height based on embedContainer's actual width
-          const actualWidth = embedContainer.clientWidth || el.clientWidth || 800;
-          const aspectRatio = this.plugin.settings.embedAspectRatio || 2 / 3;
-          let embedHeight = Math.max(400, Math.min(1200, Math.round(actualWidth * aspectRatio)));
-          embedContainer.style.height = `${embedHeight}px`;
-
           // Resize handle
           const resizeHandle = container.createDiv({ cls: 'onenote-resize-handle' });
 
@@ -111,13 +115,42 @@ export class OneNoteCodeBlockRenderer {
           const wrapperStyle = getComputedStyle(embedWrapper);
           const wrapperPadTop = parseFloat(wrapperStyle.paddingTop) || 0;
           const wrapperPadBot = parseFloat(wrapperStyle.paddingBottom) || 0;
+          const wrapperPadLeft = parseFloat(wrapperStyle.paddingLeft) || 0;
+          const wrapperPadRight = parseFloat(wrapperStyle.paddingRight) || 0;
           const titleHeight = titleBar.offsetHeight;
           const resizeHeight = resizeHandle.offsetHeight + 8; // height + margin
-          const embedBorderTop = parseInt(getComputedStyle(embedContainer).borderTopWidth) || 0;
-          const embedBorderBottom = parseInt(getComputedStyle(embedContainer).borderBottomWidth) || 0;
+          const embedBorderStyle = getComputedStyle(embedContainer);
+          const embedBorderTop = parseInt(embedBorderStyle.borderTopWidth) || 0;
+          const embedBorderBottom = parseInt(embedBorderStyle.borderBottomWidth) || 0;
+          const embedBorderLeft = parseInt(embedBorderStyle.borderLeftWidth) || 0;
+          const embedBorderRight = parseInt(embedBorderStyle.borderRightWidth) || 0;
           const overhead = Math.round(titleHeight + wrapperPadTop + wrapperPadBot + resizeHeight
             + embedBorderTop + embedBorderBottom);
+
+          // Calculate embed width from container.clientWidth (stable, always visible).
+          // embedContainer is narrower than container by wrapper padding + embed borders.
+          // This MUST match CoordinateTracker's innerCssWidth calculation to avoid height mismatch.
+          const actualWidth = Math.max(200,
+            container.clientWidth - wrapperPadLeft - wrapperPadRight - embedBorderLeft - embedBorderRight);
+          const aspectRatio = this.plugin.settings.embedAspectRatio || 2 / 3;
+          let embedHeight = Math.max(400, Math.min(1200, Math.round(actualWidth * aspectRatio)));
+          embedContainer.style.height = `${embedHeight}px`;
           container.style.height = `${embedHeight + overhead}px`;
+
+          // Window resize handler — recalculates embed height when container width changes.
+          // The CoordinateTracker reads this height for native window sizing, so it must stay current.
+          const onWindowResize = () => {
+            const newWidth = Math.max(200,
+              container.clientWidth - wrapperPadLeft - wrapperPadRight - embedBorderLeft - embedBorderRight);
+            const newHeight = Math.max(400, Math.min(1200, Math.round(newWidth * aspectRatio)));
+            if (newHeight !== embedHeight) {
+              embedHeight = newHeight;
+              embedContainer.style.height = `${embedHeight}px`;
+              container.style.height = `${embedHeight + overhead}px`;
+              if (currentTracker) currentTracker.forceUpdate();
+            }
+          };
+          window.addEventListener('resize', onWindowResize);
 
           const statusDiv = embedContainer.createDiv({ cls: 'onenote-embed-status' });
           statusDiv.textContent = 'Embedding OneNote window...';
@@ -164,6 +197,7 @@ export class OneNoteCodeBlockRenderer {
             cleanupEmbed = async () => {
               document.removeEventListener('mousemove', onMouseMove);
               document.removeEventListener('mouseup', onMouseUp);
+              window.removeEventListener('resize', onWindowResize);
               await doDetach();
               cleanupEmbed = null;
               cleanupChild.setCleanup(() => {});
@@ -185,7 +219,8 @@ export class OneNoteCodeBlockRenderer {
           }
           
           const doDetach = async () => {
-            // Dispose tracker first
+            // Dispose tracker and listeners first
+            window.removeEventListener('resize', onWindowResize);
             if (currentTracker) {
               currentTracker.dispose();
               currentTracker = null;
@@ -215,13 +250,22 @@ export class OneNoteCodeBlockRenderer {
           };
 
           const doAttach = async () => {
-            // Set heights before showing wrapper to avoid aspect ratio flicker
+            // Show wrapper first so layout is correct
+            detachedPlaceholder.style.display = 'none';
+            embedWrapper.style.display = '';
+
+            // Recalculate embedHeight from container.clientWidth (stable, always visible).
+            // This avoids relying on embedContainer.clientWidth which may return 0
+            // immediately after unhiding the wrapper.
+            const currentWidth = Math.max(200,
+              container.clientWidth - wrapperPadLeft - wrapperPadRight - embedBorderLeft - embedBorderRight);
+            embedHeight = Math.max(400, Math.min(1200, Math.round(currentWidth * aspectRatio)));
+
+            // Set heights (using recalculated value)
             embedContainer.style.height = `${embedHeight}px`;
             container.style.height = `${embedHeight + overhead}px`;
 
             // Show embedding status indicator
-            detachedPlaceholder.style.display = 'none';
-            embedWrapper.style.display = '';
             embedContainer.empty();
             const statusDiv = embedContainer.createDiv({ cls: 'onenote-embed-status' });
             statusDiv.textContent = 'Embedding OneNote window...';
@@ -270,6 +314,7 @@ export class OneNoteCodeBlockRenderer {
               cleanupEmbed = async () => {
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
+                window.removeEventListener('resize', onWindowResize);
                 await doDetach();
                 cleanupEmbed = null;
                 cleanupChild.setCleanup(() => {});
