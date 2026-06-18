@@ -40,9 +40,10 @@ export class OneNoteCodeBlockRenderer {
       const localService = this.plugin.getOneNoteLocalService();
 
       if (!localService) {
-        container.createEl('p', {
-          text: 'Local OneNote service not available. Please make sure OneNote is installed.'
-        });
+        const errDiv = container.createDiv({ cls: 'onenote-error-message' });
+        const iconEl = errDiv.createSpan({ cls: 'onenote-item-icon' });
+        setIcon(iconEl, 'alert-triangle');
+        errDiv.createSpan({ text: 'Local OneNote service not available. Please make sure OneNote is installed.' });
         return;
       }
 
@@ -146,10 +147,13 @@ export class OneNoteCodeBlockRenderer {
             const msg = embedError.message || '';
             console.warn(`[OneNote Embed] Embed FAILED: ${msg}`);
             localService.endEmbedSession(embedSessionId);
+            statusDiv.empty();
+            const errIcon = statusDiv.createSpan({ cls: 'onenote-item-icon' });
+            setIcon(errIcon, 'alert-circle');
             if (msg.includes('COM') || msg.includes('OneNote') || msg.includes('not found')) {
-              statusDiv.innerHTML = '<strong>OneNote is not running.</strong><br>Please open OneNote first, then reload this note.';
+              statusDiv.createSpan({ text: 'OneNote is not running. Please open OneNote first, then reload this note.' });
             } else {
-              statusDiv.textContent = `Failed to embed OneNote: ${msg}`;
+              statusDiv.createSpan({ text: `Failed to embed OneNote: ${msg}` });
             }
             statusDiv.addClass('onenote-embed-status--error');
           }

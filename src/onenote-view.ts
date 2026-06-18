@@ -494,6 +494,13 @@ export class OneNoteEmbedView extends ItemView {
       const pages = await service.getPages(sectionId);
       loadingEl.detach();
 
+      // Sort by modification time descending (newest first)
+      pages.sort((a, b) => {
+        const tA = a.lastModifiedTime ? new Date(a.lastModifiedTime).getTime() : 0;
+        const tB = b.lastModifiedTime ? new Date(b.lastModifiedTime).getTime() : 0;
+        return tB - tA;
+      });
+
       if (pages.length === 0) {
         const infoDiv = container.createDiv({ cls: 'onenote-info-message' });
         const emptyIcon = infoDiv.createSpan({ cls: 'onenote-item-icon' });
@@ -560,6 +567,7 @@ export class OneNoteEmbedView extends ItemView {
 
     if (page.id) {
       new ButtonComponent(actions)
+        .setIcon('external-link')
         .setButtonText('Open in OneNote')
         .setClass('mod-cta')
         .onClick(async () => {
@@ -574,6 +582,11 @@ export class OneNoteEmbedView extends ItemView {
       loadingEl.detach();
 
       if (content) {
+        // Page title bar
+        const titleBar = container.createDiv({ cls: 'onenote-page-title' });
+        setIcon(titleBar, 'file-text');
+        titleBar.createSpan({ text: page.title || 'Untitled Page' });
+
         const iframeContainer = container.createDiv({ cls: 'onenote-embed-container' });
         // Wrap content in a complete HTML document for proper iframe rendering
         // Use prefers-color-scheme for theme-aware colors since srcdoc iframes
