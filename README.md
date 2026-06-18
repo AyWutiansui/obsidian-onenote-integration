@@ -201,6 +201,10 @@ cl /O2 /EHsc win-embed-overlay.c user32.lib psapi.lib dwmapi.lib shcore.lib /Fe:
 - **手写笔记渲染**：OneNote 手写内容（InkDrawing）的 ISF 二进制格式无法在浏览器中渲染，插件尝试提取伴随的预览图像，但不保证所有手写内容都有可用的预览
 - **单实例嵌入**：同时只能有一个活跃的嵌入会话
 
+## 致谢
+
+[LINUX DO — 中文开发者社区](https://linux.do/)
+
 ## 许可证
 
 MIT License
