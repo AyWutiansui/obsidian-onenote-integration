@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, ButtonComponent, TextComponent } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, ButtonComponent, TextComponent, setIcon } from 'obsidian';
 import { ONE_NOTE_VIEW_TYPE } from './main';
 import OneNoteIntegrationPlugin from './main';
 import { LocalOneNoteNotebook, LocalOneNoteSection, LocalOneNotePage } from './types';
@@ -83,13 +83,17 @@ export class OneNoteEmbedView extends ItemView {
   /** Create a clickable list item with unified styling and accessibility. */
   private renderListItem(
     parent: HTMLElement, text: string, onClick: () => void | Promise<void>,
-    childCount?: number
+    childCount?: number, icon?: string
   ): HTMLElement {
     const item = parent.createDiv({ cls: 'onenote-list-item' });
     item.setAttribute('role', 'button');
     item.setAttribute('tabindex', '0');
     item.setAttribute('aria-label', text);
-    item.createSpan({ text });
+    if (icon) {
+      const iconEl = item.createSpan({ cls: 'onenote-item-icon' });
+      setIcon(iconEl, icon);
+    }
+    item.createSpan({ text, cls: 'onenote-item-label' });
     if (childCount !== undefined) {
       const badge = item.createSpan({ cls: 'onenote-item-count' });
       badge.textContent = `${childCount}`;
@@ -238,8 +242,12 @@ export class OneNoteEmbedView extends ItemView {
       }
 
       if (resultCount === 0) {
-        container.createEl('p', {
-          text: 'No matching pages found.',
+        const noResult = container.createDiv({ cls: 'onenote-info-message' });
+        const noIcon = noResult.createSpan({ cls: 'onenote-item-icon' });
+        setIcon(noIcon, 'search-x');
+        noResult.createEl('p', { text: 'No matching pages found.' });
+        noResult.createEl('p', {
+          text: 'Try a different search term, or clear the search to browse all notebooks.',
           cls: 'onenote-hint-text'
         });
       }
@@ -385,7 +393,7 @@ export class OneNoteEmbedView extends ItemView {
           this.currentPage = null;
           this.currentPageName = '';
           await this.loadSections(notebook.id, container);
-        }, notebook.sections?.length);
+        }, notebook.sections?.length, 'book');
       }
     } catch (error: any) {
       container.createEl('div', {
@@ -410,7 +418,21 @@ export class OneNoteEmbedView extends ItemView {
       loadingEl.detach();
 
       if (sections.length === 0) {
-        container.createEl('p', { text: 'No sections found in this notebook' });
+        const infoDiv = container.createDiv({ cls: 'onenote-info-message' });
+        const emptyIcon = infoDiv.createSpan({ cls: 'onenote-item-icon' });
+        setIcon(emptyIcon, 'folder-x');
+        infoDiv.createEl('p', { text: 'This notebook has no sections yet.' });
+        infoDiv.createEl('p', {
+          text: 'Open OneNote to add sections to this notebook.',
+          cls: 'onenote-hint-text'
+        });
+
+        new ButtonComponent(infoDiv)
+          .setButtonText('Open in OneNote')
+          .setClass('mod-cta')
+          .onClick(async () => {
+            await service.openOneNoteApp();
+          });
         return;
       }
 
@@ -424,7 +446,7 @@ export class OneNoteEmbedView extends ItemView {
           this.currentPage = null;
           this.currentPageName = '';
           await this.loadPages(section.id, container);
-        }, section.pages?.length);
+        }, section.pages?.length, 'folder');
       }
     } catch (error: any) {
       container.createEl('div', {
@@ -450,7 +472,9 @@ export class OneNoteEmbedView extends ItemView {
 
       if (pages.length === 0) {
         const infoDiv = container.createDiv({ cls: 'onenote-info-message' });
-        infoDiv.createEl('p', { text: 'No pages found in this section.' });
+        const emptyIcon = infoDiv.createSpan({ cls: 'onenote-item-icon' });
+        setIcon(emptyIcon, 'file-x');
+        infoDiv.createEl('p', { text: 'This section has no pages yet.' });
 
         new ButtonComponent(infoDiv)
           .setButtonText('Open Section in OneNote')
@@ -468,7 +492,9 @@ export class OneNoteEmbedView extends ItemView {
 
       for (const page of pages) {
         const pageItem = pageList.createDiv({ cls: 'onenote-page-item' });
-        pageItem.createSpan({ text: page.title || 'Untitled Page' });
+        const pageIcon = pageItem.createSpan({ cls: 'onenote-item-icon' });
+        setIcon(pageIcon, 'file-text');
+        pageItem.createSpan({ text: page.title || 'Untitled Page', cls: 'onenote-item-label' });
 
         if (page.lastModifiedTime) {
           const dateSpan = pageItem.createSpan({ cls: 'onenote-item-date' });
