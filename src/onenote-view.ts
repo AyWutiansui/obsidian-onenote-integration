@@ -39,15 +39,18 @@ export class OneNoteEmbedView extends ItemView {
     const headerDiv = container.createDiv({ cls: 'onenote-header' });
 
     new ButtonComponent(headerDiv)
-      .setButtonText('Load Notebooks')
+      .setIcon('book-open')
+      .setTooltip('Load Notebooks')
+      .setClass('onenote-icon-btn')
       .onClick(async () => {
         await this.loadNotebooks(this.contentDiv!);
       });
 
     // Add cache refresh button to invalidate the 5-min hierarchy cache
     new ButtonComponent(headerDiv)
-      .setButtonText('↻ Refresh')
+      .setIcon('refresh-cw')
       .setTooltip('Refresh notebook list (clear cache)')
+      .setClass('onenote-icon-btn')
       .onClick(async () => {
         const svc = this.plugin.getOneNoteLocalService();
         if (svc) {
@@ -89,6 +92,7 @@ export class OneNoteEmbedView extends ItemView {
     item.setAttribute('role', 'button');
     item.setAttribute('tabindex', '0');
     item.setAttribute('aria-label', text);
+    item.setAttribute('title', text);
     if (icon) {
       const iconEl = item.createSpan({ cls: 'onenote-item-icon' });
       setIcon(iconEl, icon);
@@ -131,13 +135,31 @@ export class OneNoteEmbedView extends ItemView {
     });
   }
 
+  /** Highlight matching text within a string by wrapping matches in <mark> tags. */
+  private highlightText(el: HTMLElement, text: string, query: string): void {
+    const lower = text.toLowerCase();
+    const qLower = query.toLowerCase();
+    const idx = lower.indexOf(qLower);
+    if (idx === -1) {
+      el.textContent = text;
+      return;
+    }
+    el.textContent = '';
+    if (idx > 0) el.appendText(text.slice(0, idx));
+    const mark = el.createEl('mark', { cls: 'onenote-search-highlight' });
+    mark.textContent = text.slice(idx, idx + query.length);
+    if (idx + query.length < text.length) el.appendText(text.slice(idx + query.length));
+  }
+
   /** Render breadcrumb navigation showing the current hierarchy path. */
   private renderBreadcrumb(container: HTMLElement): void {
     const crumb = container.createDiv({ cls: 'onenote-breadcrumb' });
 
     // Root: always clickable to go back to notebook list
     const root = crumb.createSpan({ cls: 'onenote-breadcrumb-item' });
-    root.textContent = '📓 Notebooks';
+    const rootIcon = root.createSpan({ cls: 'onenote-breadcrumb-icon' });
+    setIcon(rootIcon, 'book-open');
+    root.appendText(' Notebooks');
     this.makeClickable(root, () => {
       this.currentNotebook = null;
       this.currentNotebookName = '';
@@ -219,13 +241,15 @@ export class OneNoteEmbedView extends ItemView {
               const item = resultsDiv.createDiv({ cls: 'onenote-search-result' });
 
               const pathSpan = item.createDiv({ cls: 'onenote-search-path' });
-              pathSpan.createSpan({ text: nb.name, cls: 'onenote-search-path-nb' });
+              const nbEl = pathSpan.createSpan({ cls: 'onenote-search-path-nb' });
+              this.highlightText(nbEl, nb.name, trimmed);
               pathSpan.createSpan({ text: ' › ', cls: 'onenote-breadcrumb-sep' });
-              pathSpan.createSpan({ text: sec.name, cls: 'onenote-search-path-sec' });
+              const secEl = pathSpan.createSpan({ cls: 'onenote-search-path-sec' });
+              this.highlightText(secEl, sec.name, trimmed);
               pathSpan.createSpan({ text: ' › ', cls: 'onenote-breadcrumb-sep' });
 
               const titleSpan = item.createSpan({ cls: 'onenote-search-title' });
-              titleSpan.textContent = pageTitle;
+              this.highlightText(titleSpan, pageTitle, trimmed);
 
               this.makeClickable(item, async () => {
                 this.currentNotebook = nb.id;
@@ -492,6 +516,7 @@ export class OneNoteEmbedView extends ItemView {
 
       for (const page of pages) {
         const pageItem = pageList.createDiv({ cls: 'onenote-page-item' });
+        pageItem.setAttribute('title', page.title || 'Untitled Page');
         const pageIcon = pageItem.createSpan({ cls: 'onenote-item-icon' });
         setIcon(pageIcon, 'file-text');
         pageItem.createSpan({ text: page.title || 'Untitled Page', cls: 'onenote-item-label' });

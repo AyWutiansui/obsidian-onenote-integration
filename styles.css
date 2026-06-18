@@ -97,6 +97,22 @@
   flex-wrap: wrap;
 }
 
+.onenote-icon-btn {
+  padding: 4px 8px !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.onenote-icon-btn:hover {
+  color: var(--text-normal);
+  background-color: var(--background-modifier-hover) !important;
+}
+
 .onenote-header .onenote-platform-info {
   margin-left: auto;
   font-size: 0.85em;
@@ -165,6 +181,13 @@
 .onenote-search-title {
   font-weight: 500;
   color: var(--text-normal);
+}
+
+.onenote-search-highlight {
+  background-color: var(--text-highlight-bg, rgba(255, 213, 0, 0.3));
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
 }
 
 /* List items — unified style for notebook/section/page items in sidebar */
@@ -383,6 +406,17 @@
 .onenote-breadcrumb-current {
   color: var(--text-normal);
   font-weight: 500;
+}
+
+.onenote-breadcrumb-icon {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 2px;
+}
+
+.onenote-breadcrumb-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* ===== Page Actions ===== */
