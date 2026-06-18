@@ -27,23 +27,15 @@ export class OneNoteCodeBlockRenderer {
 
   async renderCodeBlock(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) {
     try {
-      // Debug logging
-      const { appendFileSync } = require('fs');
-      const { join } = require('path');
-      const debugLog = join(
-        (this.plugin.app.vault.adapter as any).basePath,
-        '.obsidian', 'plugins', 'obsidian-onenote-integration', 'debug.log'
-      );
-      appendFileSync(debugLog, `[${new Date().toISOString()}] renderCodeBlock called, source: ${source.substring(0, 100)}\n`);
+      // Debug logging (conditional, uses console.debug instead of sync file I/O)
+      if ((window as any).__ONENOTE_DEBUG__) {
+        console.debug('[OneNote Embed] renderCodeBlock called, source:', source.substring(0, 100));
+      }
 
       const container = el.createDiv({ cls: 'onenote-embed-container' });
       const cleanupChild = new OneNoteEmbedCleanupChild(container);
       ctx.addChild(cleanupChild);
-      container.style.minHeight = '200px';
-      container.style.padding = '16px';
-      container.style.border = '1px solid var(--background-modifier-border)';
-      container.style.borderRadius = '6px';
-      container.style.background = 'var(--background-secondary)';
+      container.style.setProperty('max-height', 'none', 'important');  // Override Obsidian's code block max-height
 
       const localService = this.plugin.getOneNoteLocalService();
 
@@ -67,14 +59,8 @@ export class OneNoteCodeBlockRenderer {
         if (pageId) {
           // Always show a title header
           const titleBar = container.createDiv({ cls: 'onenote-page-title' });
-          titleBar.style.display = 'flex';
-          titleBar.style.alignItems = 'center';
-          titleBar.style.gap = '8px';
-          titleBar.style.marginBottom = '12px';
-          titleBar.style.paddingBottom = '8px';
-          titleBar.style.borderBottom = '1px solid var(--background-modifier-border)';
           setIcon(titleBar, 'file-text');
-          titleBar.createSpan({ text: pageTitle || 'OneNote Page' }).style.fontWeight = '600';
+          titleBar.createSpan({ text: pageTitle || 'OneNote Page' });
 
           // Live window embed (local mode)
           let cleanupEmbed: (() => Promise<void>) | null = null;
@@ -87,26 +73,40 @@ export class OneNoteCodeBlockRenderer {
 
           loadingDiv.remove();
 
-          // Create embed container with OneNote-friendly aspect ratio
-          // A4 paper ratio is ~1:1.414 (width:height), but for screen viewing use 16:10 or 3:2
-          const containerWidth = el.clientWidth || 800;
-          // Use 3:2 aspect ratio (wider than A4, better for screen) as default
-          // Height = width * (2/3), clamped to reasonable bounds
-          const aspectRatio = 2 / 3;
-          const calculatedHeight = Math.round(containerWidth * aspectRatio);
-          const minHeight = 400;
-          const maxHeight = 1200;
-          const embedHeight = Math.max(minHeight, Math.min(maxHeight, calculatedHeight));
-
           // Create embed container
           const embedContainer = container.createDiv({ cls: 'onenote-embed-live' });
-          embedContainer.style.width = '100%';
+
+          // Calculate height based on embedContainer's actual width (accounts for container padding)
+          const actualWidth = embedContainer.clientWidth || el.clientWidth || 800;
+          const aspectRatio = this.plugin.settings.embedAspectRatio || 2 / 3;
+          const embedHeight = Math.max(400, Math.min(1200, Math.round(actualWidth * aspectRatio)));
           embedContainer.style.height = `${embedHeight}px`;
-          embedContainer.style.border = '1px solid var(--background-modifier-border)';
-          embedContainer.style.borderRadius = '4px';
-          embedContainer.style.position = 'relative';
-          embedContainer.style.overflow = 'hidden';
-          embedContainer.style.background = 'var(--background-primary)';
+
+          // Detach/Attach toggle button — created early so we can measure overhead
+          const btnContainer = container.createDiv({ cls: 'onenote-handwritten-actions' });
+
+          let isAttached = true;
+
+          const actionBtn = btnContainer.createEl('button', {
+            text: 'Detach OneNote Window',
+            cls: 'mod-cta'
+          });
+
+          // Calculate non-embed overhead explicitly from child elements.
+          // We cannot use container.offsetHeight - embedContainer.offsetHeight because
+          // Obsidian's CSS max-height may still constrain the container before we set its height.
+          const titleHeight = titleBar.offsetHeight;
+          const titleMarginBottom = parseInt(getComputedStyle(titleBar).marginBottom) || 0;
+          const btnHeight = btnContainer.offsetHeight;
+          const btnMarginTop = parseInt(getComputedStyle(btnContainer).marginTop) || 0;
+          const embedBorderTop = parseInt(getComputedStyle(embedContainer).borderTopWidth) || 0;
+          const embedBorderBottom = parseInt(getComputedStyle(embedContainer).borderBottomWidth) || 0;
+          // Container padding (16px top + 16px bottom) + border (1px top + 1px bottom)
+          const containerPadding = 32;
+          const containerBorder = 2;
+          const overhead = titleHeight + titleMarginBottom + btnMarginTop + btnHeight
+            + embedBorderTop + embedBorderBottom + containerPadding + containerBorder;
+          container.style.height = `${embedHeight + overhead}px`;
 
           const statusDiv = embedContainer.createDiv({ cls: 'onenote-embed-status' });
           statusDiv.style.padding = '8px';
@@ -115,9 +115,13 @@ export class OneNoteCodeBlockRenderer {
           statusDiv.textContent = 'Embedding OneNote window...';
 
           try {
-            appendFileSync(debugLog, `[${new Date().toISOString()}] Attempting embed, pageId: ${pageId}\n`);
+            if ((window as any).__ONENOTE_DEBUG__) {
+              console.debug(`[OneNote Embed] Attempting embed, pageId: ${pageId}`);
+            }
             const hwnd = await localService.embedOneNoteWindow(pageId);
-            appendFileSync(debugLog, `[${new Date().toISOString()}] Embed SUCCESS, hwnd: ${hwnd}\n`);
+            if ((window as any).__ONENOTE_DEBUG__) {
+              console.debug(`[OneNote Embed] Embed SUCCESS, hwnd: ${hwnd}`);
+            }
             statusDiv.remove();
 
             // Position tracking version doesn't need reparenting - window is moved directly via SetWindowPos
@@ -126,7 +130,7 @@ export class OneNoteCodeBlockRenderer {
             const tracker = new CoordinateTracker(embedContainer, (x, y, w, h) => {
               if (!localService.isActiveEmbedSession(embedSessionId)) return;
               localService.repositionOneNoteWindow(x, y, w, h);
-            });
+            }, aspectRatio, container, overhead);
             currentTracker = tracker;
 
             // Force position updates for the first 2 seconds — OneNote may
@@ -143,7 +147,7 @@ export class OneNoteCodeBlockRenderer {
             cleanupChild.setCleanup(cleanupEmbed);
           } catch (embedError: any) {
             const msg = embedError.message || '';
-            appendFileSync(debugLog, `[${new Date().toISOString()}] Embed FAILED: ${msg}\n`);
+            console.warn(`[OneNote Embed] Embed FAILED: ${msg}`);
             localService.endEmbedSession(embedSessionId);
             if (msg.includes('COM') || msg.includes('OneNote') || msg.includes('not found')) {
               statusDiv.innerHTML = '<strong>OneNote is not running.</strong><br>Please open OneNote first, then reload this note.';
@@ -152,19 +156,6 @@ export class OneNoteCodeBlockRenderer {
             }
             statusDiv.style.color = 'var(--text-error)';
           }
-
-          // Detach/Attach toggle button
-          const btnContainer = container.createDiv({ cls: 'onenote-handwritten-actions' });
-          btnContainer.style.marginTop = '8px';
-          btnContainer.style.display = 'flex';
-          btnContainer.style.gap = '8px';
-
-          let isAttached = true;
-          
-          const actionBtn = btnContainer.createEl('button', {
-            text: 'Detach OneNote Window',
-            cls: 'mod-cta'
-          });
           
           const doDetach = async () => {
             // Dispose tracker first
@@ -186,6 +177,7 @@ export class OneNoteCodeBlockRenderer {
             // Hide embed container
             embedContainer.style.height = '0px';
             embedContainer.style.overflow = 'hidden';
+            container.style.height = `${overhead}px`;
             
             // Update UI
             actionBtn.textContent = 'Attach OneNote Window';
@@ -209,14 +201,13 @@ export class OneNoteCodeBlockRenderer {
               
               // Embed OneNote window
               const hwnd = await localService.embedOneNoteWindow(pageId);
-              console.log('[OneNote Embed] Re-attached HWND:', hwnd);
-              
+
               // Position tracking version doesn't need reparenting
               // Create new coordinate tracker
               const tracker = new CoordinateTracker(embedContainer, (x, y, w, h) => {
                 if (!localService.isActiveEmbedSession(newSessionId)) return;
                 localService.repositionOneNoteWindow(x, y, w, h);
-              });
+              }, aspectRatio, container, overhead);
               currentTracker = tracker;
               
               // Set up cleanup for this attachment
@@ -230,6 +221,7 @@ export class OneNoteCodeBlockRenderer {
               // Show embed container with calculated height
               embedContainer.style.height = `${embedHeight}px`;
               embedContainer.style.overflow = 'hidden';
+              container.style.height = `${embedHeight + overhead}px`;
               
               // Update UI
               actionBtn.textContent = 'Detach OneNote Window';
@@ -270,7 +262,7 @@ export class OneNoteCodeBlockRenderer {
       el.createEl('div', {
         cls: 'onenote-error-message',
         text: `OneNote code block error: ${fatalError.message}`
-      }).style.color = 'red';
+      });
     }
   }
 
@@ -409,63 +401,118 @@ export class OneNoteCodeBlockRenderer {
     container: HTMLElement, localService: any,
     el: HTMLElement, ctx: MarkdownPostProcessorContext, source: string
   ) {
-    const header = container.createDiv();
-    header.style.display = 'flex';
-    header.style.alignItems = 'center';
-    header.style.gap = '8px';
-    header.style.marginBottom = '12px';
+    const header = container.createDiv({ cls: 'onenote-page-selector-header' });
 
     setIcon(header, 'book-open');
-    header.createSpan({ text: 'Select a OneNote page to embed (Local Mode):' });
+    header.createSpan({ text: 'Select a OneNote page to embed:' });
 
-    const controlsContainer = container.createDiv();
-    controlsContainer.style.display = 'flex';
-    controlsContainer.style.flexDirection = 'column';
-    controlsContainer.style.gap = '8px';
+    const controlsContainer = container.createDiv({ cls: 'onenote-page-selector-controls' });
 
-    const select = controlsContainer.createEl('select');
-    select.style.width = '100%';
-    select.style.padding = '8px';
-    select.style.borderRadius = '4px';
-    select.style.border = '1px solid var(--background-modifier-border)';
-    select.style.background = 'var(--background-primary)';
+    // --- Notebook dropdown ---
+    const notebookLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label' });
+    notebookLabel.textContent = 'Notebook';
+    const notebookSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select' });
+    notebookSelect.createEl('option', { text: 'Loading notebooks...', value: '' });
 
-    select.createEl('option', { text: 'Loading notebooks...', value: '' });
+    // --- Section dropdown ---
+    const sectionLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label' });
+    sectionLabel.textContent = 'Section';
+    const sectionSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select' });
+    sectionSelect.disabled = true;
+    sectionSelect.createEl('option', { text: 'Select a notebook first', value: '' });
 
+    // --- Page dropdown (lazy — loads when section is selected) ---
+    const pageLabel = controlsContainer.createEl('label', { cls: 'onenote-page-selector-label' });
+    pageLabel.textContent = 'Page';
+    const pageSelect = controlsContainer.createEl('select', { cls: 'onenote-page-selector-select' });
+    pageSelect.disabled = true;
+    pageSelect.createEl('option', { text: 'Select a section first', value: '' });
+
+    let notebooks: any[] = [];
+
+    // Phase 1: Fast shallow fetch — notebooks + sections only (no pages)
     try {
-      const notebooks = await localService.getNotebooks();
-
-      select.empty();
-      select.createEl('option', { text: 'Select a page...', value: '' });
-
-      for (const notebook of notebooks) {
-        const optgroup = select.createEl('optgroup', {
-          attr: { label: notebook.name }
-        });
-
-        try {
-          const sections = await localService.getSections(notebook.id);
-          for (const section of sections) {
-            const pages = await localService.getPages(section.id);
-            for (const page of pages) {
-              optgroup.createEl('option', {
-                text: `${notebook.name} > ${section.name} > ${page.title}`,
-                value: page.id
-              });
-            }
-          }
-        } catch (err) {
-          console.error('Error loading sections:', err);
-        }
+      notebooks = await localService.getNotebooks();
+      notebookSelect.empty();
+      notebookSelect.createEl('option', { text: 'Select a notebook...', value: '' });
+      for (const nb of notebooks) {
+        notebookSelect.createEl('option', { text: nb.name, value: nb.id });
+      }
+      if (notebooks.length === 1) {
+        notebookSelect.value = notebooks[0].id;
+        notebookSelect.dispatchEvent(new Event('change'));
       }
     } catch (error: any) {
-      select.empty();
-      select.createEl('option', { text: 'Error loading notebooks', value: '' });
+      notebookSelect.empty();
+      notebookSelect.createEl('option', { text: 'Error loading notebooks', value: '' });
     }
 
-    const buttonContainer = controlsContainer.createDiv();
-    buttonContainer.style.display = 'flex';
-    buttonContainer.style.gap = '8px';
+    // Notebook change → populate sections (instant from cache)
+    notebookSelect.addEventListener('change', () => {
+      const nbId = notebookSelect.value;
+      sectionSelect.empty();
+      pageSelect.empty();
+      pageSelect.createEl('option', { text: 'Select a section first', value: '' });
+      pageSelect.disabled = true;
+
+      if (!nbId) {
+        sectionSelect.createEl('option', { text: 'Select a notebook first', value: '' });
+        sectionSelect.disabled = true;
+        return;
+      }
+
+      const nb = notebooks.find((n: any) => n.id === nbId);
+      const sections = nb?.sections || [];
+
+      if (sections.length === 0) {
+        sectionSelect.createEl('option', { text: 'No sections in this notebook', value: '' });
+        sectionSelect.disabled = true;
+        return;
+      }
+
+      sectionSelect.disabled = false;
+      sectionSelect.createEl('option', { text: 'Select a section...', value: '' });
+      for (const sec of sections) {
+        sectionSelect.createEl('option', { text: sec.name, value: sec.id });
+      }
+    });
+
+    // Section change → lazy load pages (one fast PowerShell call for this section only)
+    sectionSelect.addEventListener('change', async () => {
+      const secId = sectionSelect.value;
+      pageSelect.empty();
+
+      if (!secId) {
+        pageSelect.createEl('option', { text: 'Select a section first', value: '' });
+        pageSelect.disabled = true;
+        return;
+      }
+
+      pageSelect.disabled = true;
+      pageSelect.createEl('option', { text: 'Loading pages...', value: '' });
+
+      try {
+        const pages = await localService.getPages(secId);
+        pageSelect.empty();
+
+        if (pages.length === 0) {
+          pageSelect.createEl('option', { text: 'No pages in this section', value: '' });
+          return;
+        }
+
+        pageSelect.createEl('option', { text: 'Select a page...', value: '' });
+        for (const page of pages) {
+          pageSelect.createEl('option', { text: page.title, value: page.id });
+        }
+        pageSelect.disabled = false;
+      } catch (err: any) {
+        pageSelect.empty();
+        pageSelect.createEl('option', { text: `Error: ${err.message}`, value: '' });
+      }
+    });
+
+    // --- Buttons ---
+    const buttonContainer = controlsContainer.createDiv({ cls: 'onenote-page-selector-buttons' });
 
     const loadButton = buttonContainer.createEl('button', {
       text: 'Load Page',
@@ -479,17 +526,17 @@ export class OneNoteCodeBlockRenderer {
     openButton.style.flex = '1';
 
     loadButton.addEventListener('click', async () => {
-      const pageId = select.value;
+      const pageId = pageSelect.value;
       if (pageId) {
-        const selectedText = select.options[select.selectedIndex]?.text || '';
-        await this.replaceCodeBlockContent(pageId, selectedText, el, ctx, source);
+        const pageTitle = pageSelect.options[pageSelect.selectedIndex]?.text || '';
+        await this.replaceCodeBlockContent(pageId, pageTitle, el, ctx, source);
       } else {
         new Notice('Please select a page');
       }
     });
 
     openButton.addEventListener('click', async () => {
-      const pageId = select.value;
+      const pageId = pageSelect.value;
       if (pageId) {
         try {
           const ok = await localService.navigateToPage(pageId);

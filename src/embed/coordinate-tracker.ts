@@ -2,45 +2,38 @@
  * Calculate the Electron chrome offset (title bar + toolbar height).
  * getBoundingClientRect returns viewport-relative coords; we need screen-absolute.
  * 
- * On Windows Chromium, window.screenX/Y and outerHeight are in physical pixels,
- * innerHeight is in CSS pixels. Win32 SetWindowPos expects physical pixels.
- * Electron's getContentBounds() returns physical pixels directly.
+ * On Windows Chromium, window.screenX/Y are in CSS pixels (DIP),
+ * Win32 SetWindowPos expects physical pixels — multiply by DPR.
  */
 export function calculateChromeOffset(): { x: number; y: number } {
-  // Strategy 1: Try electron.remote (available when enableRemoteModule=true)
-  try {
-    const electron = require('electron');
-    const win = electron.remote?.getCurrentWindow?.();
-    if (win) {
-      const bounds = win.getContentBounds();
-      if (bounds && (bounds.x !== 0 || bounds.y !== 0)) {
-        // getContentBounds() returns physical pixels — use directly
-        return { x: bounds.x, y: bounds.y };
-      }
-    }
-  } catch {
-    // Electron remote not available
+  const dpr = window.devicePixelRatio || 1;
+  const screen = window.screen as any;
+
+  // Obsidian uses a frameless window: outerHeight === innerHeight always.
+  // Maximized detection relies on:
+  // 1. Negative screenX/Y (Windows extended frame for maximized windows)
+  // 2. Window dimensions matching screen size (fallback for edge cases)
+  const availW = screen.availWidth || window.screen.width;
+  const availH = screen.availHeight || window.screen.height;
+  const matchesScreen = Math.abs(window.innerWidth - availW) < 10 &&
+                        Math.abs(window.innerHeight - availH) < 10;
+  const isMaximized = window.screenX < 0 || window.screenY < 0 || matchesScreen;
+
+  let offsetX: number;
+  let offsetY: number;
+
+  if (isMaximized) {
+    // Maximized/fullscreen: content area starts at the available screen area origin
+    offsetX = Math.round((screen.availLeft ?? 0) * dpr);
+    offsetY = Math.round((screen.availTop ?? 0) * dpr);
+  } else {
+    // Windowed mode: screenX/Y are in CSS pixels, convert to physical
+    const chromeH = window.outerHeight - window.innerHeight;
+    offsetX = Math.round(window.screenX * dpr);
+    offsetY = Math.round((window.screenY + chromeH) * dpr);
   }
 
-  // Strategy 2: Try @electron/remote (newer API)
-  try {
-    const remote = require('@electron/remote');
-    const win = remote?.getCurrentWindow?.();
-    if (win) {
-      const bounds = win.getContentBounds();
-      if (bounds && (bounds.x !== 0 || bounds.y !== 0)) {
-        return { x: bounds.x, y: bounds.y };
-      }
-    }
-  } catch {
-    // @electron/remote not available
-  }
-
-  // Strategy 3: Use window.screenX/Y + chrome height
-  // outerHeight and screenX/Y are in physical pixels on Windows Chromium,
-  // innerHeight is in CSS pixels. Chrome height = outerHeight - innerHeight (physical).
-  const chromeH = window.outerHeight - window.innerHeight;
-  return { x: window.screenX, y: window.screenY + chromeH };
+  return { x: offsetX, y: offsetY };
 }
 
 /**
@@ -57,26 +50,43 @@ export function calculateChromeOffset(): { x: number; y: number } {
 export class CoordinateTracker {
   private _container: HTMLElement;
   private _callback: (x: number, y: number, w: number, h: number) => void;
-  private _offset: { x: number; y: number };
   private _scrollHandler: () => void;
+  private _resizeHandler: () => void;
   private _resizeObserver: ResizeObserver;
   private _mutationObserver: MutationObserver;
   private _rafId: number | null = null;
   private _scrollAncestors: HTMLElement[] = [];
   private _lastRect: DOMRectReadOnly | null = null;
   private _lastDpr: number = 0;
+  private _lastOffsetX: number = NaN;
+  private _lastOffsetY: number = NaN;
+  private _lastOccluded: boolean = false;
   private _disposed: boolean = false;
+  private _lastOcclusionCheck: number = 0;
+  private _cachedBorderLeft: number = 0;
+  private _cachedBorderTop: number = 0;
+  private _cachedBorderRight: number = 0;
+  private _cachedBorderWidth: number = -1;  // container width when borders were last read
+  private _aspectRatio: number;
+  private _hostContainer: HTMLElement | null;
+  private _hostExtraHeight: number;
 
   constructor(
     container: HTMLElement,
-    callback: (x: number, y: number, w: number, h: number) => void
+    callback: (x: number, y: number, w: number, h: number) => void,
+    aspectRatio: number = 2 / 3,
+    hostContainer: HTMLElement | null = null,
+    hostExtraHeight: number = 0
   ) {
     this._container = container;
     this._callback = callback;
-    this._offset = calculateChromeOffset();
+    this._aspectRatio = aspectRatio;
+    this._hostContainer = hostContainer;
+    this._hostExtraHeight = hostExtraHeight;
 
-    this._scrollHandler = () => this.update();
-    
+    this._scrollHandler = () => this.update(true);  // fromScroll: skip expensive isOccluded()
+    this._resizeHandler = () => this.update();
+
     // Strategy 1: ResizeObserver on container
     this._resizeObserver = new ResizeObserver(() => this.update());
     this._resizeObserver.observe(container);
@@ -85,14 +95,16 @@ export class CoordinateTracker {
     window.addEventListener('scroll', this._scrollHandler, true);
     this._observeScrollAncestors(container);
 
+    // Strategy 3: Window resize listener (catches maximize, restore, fullscreen, manual resize)
+    window.addEventListener('resize', this._resizeHandler);
+
     // Strategy 3: MutationObserver on document body (sidebar toggles, class changes)
     this._mutationObserver = new MutationObserver((mutations) => {
       // Check if any mutation might affect layout
-      const affectsLayout = mutations.some(m => 
+      const affectsLayout = mutations.some(m =>
         m.type === 'attributes' && (
-          m.attributeName === 'class' || 
-          m.attributeName === 'style' ||
-          m.attributeName === 'data-'
+          m.attributeName === 'class' ||
+          m.attributeName === 'style'
         ) ||
         m.type === 'childList' ||
         m.type === 'characterData'
@@ -141,6 +153,65 @@ export class CoordinateTracker {
     this._rafId = window.setTimeout(poll, 500);
   }
 
+  /** Known Obsidian overlay selectors that can cover the code block. */
+  private static readonly OVERLAY_SELECTORS = [
+    '.modal-container',
+    '.modal-bg',
+    '.suggestion-container',
+    '.prompt',                    // command palette
+    '.popover',                   // hover preview / page preview
+    '.hover-popover',
+    '.menu',                      // context menus / dropdown menus
+    '.workspace-leaf-resize-handle',
+    '.sidebar-toggle-button',
+    '.notice-container',
+  ];
+
+  /**
+   * Check whether the code block is occluded by another Obsidian UI element.
+   * Uses two strategies:
+   *   1. Check known overlay selectors for bounding-rect overlap.
+   *   2. Use elementFromPoint at the centre of the code block to catch
+   *      any unexpected overlay (plugins, custom popups, etc.).
+   */
+  private isOccluded(rect: DOMRectReadOnly): boolean {
+    // Strategy 1: known overlay elements
+    for (const selector of CoordinateTracker.OVERLAY_SELECTORS) {
+      const overlays = document.querySelectorAll(selector);
+      for (const el of Array.from(overlays)) {
+        const htmlEl = el as HTMLElement;
+        // Skip hidden / zero-size elements
+        if (htmlEl.offsetWidth === 0 && htmlEl.offsetHeight === 0) continue;
+        const style = getComputedStyle(htmlEl);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+
+        const oRect = htmlEl.getBoundingClientRect();
+        // Check bounding-rect overlap (with a small 10px inset to avoid edge cases)
+        if (rect.left + 10 < oRect.right &&
+            rect.right - 10 > oRect.left &&
+            rect.top + 10 < oRect.bottom &&
+            rect.bottom - 10 > oRect.top) {
+          return true;
+        }
+      }
+    }
+
+    // Strategy 2: elementFromPoint at the centre of the code block
+    if (typeof document.elementFromPoint === 'function') {
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      if (cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight) {
+        const topEl = document.elementFromPoint(cx, cy);
+        if (topEl && !this._container.contains(topEl)) {
+          // Something else is on top of the code block centre
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
   /** Force send position even if coordinates haven't changed (bypasses cache). */
   forceUpdate(): void {
     if (this._disposed || !this._container.isConnected) return;
@@ -148,17 +219,51 @@ export class CoordinateTracker {
     this.update();
   }
 
-  /** Recalculate and report position. Only fires callback if position changed. */
-  update(): void {
+  /** Recalculate and report position. Only fires callback if position changed.
+   *  @param fromScroll - If true, skip expensive occlusion check (throttled to every 500ms) */
+  update(fromScroll: boolean = false): void {
     if (this._disposed || !this._container.isConnected) return;
 
     const rect = this._container.getBoundingClientRect();
     const currentDpr = window.devicePixelRatio || 1;
 
-    // Skip if position hasn't changed (avoid redundant updates)
-    // Also check DPR — it changes when window moves between monitors
+    // Sync container heights on every update — fixes initial render timing
+    // issue where clientWidth wasn't ready. Runs before all early-return paths.
+    const containerCssWidth = rect.width;
+    const syncedHeight = Math.max(400, Math.min(1200, Math.round(containerCssWidth * this._aspectRatio)));
+    const heightStr = `${syncedHeight}px`;
+    if (this._container.style.height !== heightStr) {
+      this._container.style.height = heightStr;
+    }
+    // Set outer host container height = embed height + overhead (title bar, buttons, padding)
+    if (this._hostContainer) {
+      const hostHeightStr = `${syncedHeight + this._hostExtraHeight}px`;
+      if (this._hostContainer.style.height !== hostHeightStr) {
+        this._hostContainer.style.height = hostHeightStr;
+        this._hostContainer.style.setProperty('max-height', 'none', 'important');
+      }
+    }
+
+    // Recalculate chrome offset every time — handles maximize/resize/state changes
+    const offset = calculateChromeOffset();
+
+    // Throttle expensive occlusion check: skip during rapid scroll events,
+    // only re-check every 500ms. The poll loop (500ms) will catch overlays anyway.
+    let occluded: boolean;
+    const now = Date.now();
+    if (fromScroll && (now - this._lastOcclusionCheck) < 500) {
+      occluded = this._lastOccluded;
+    } else {
+      occluded = this.isOccluded(rect);
+      this._lastOcclusionCheck = now;
+    }
+
+    // Skip if nothing changed (avoid redundant updates)
     if (this._lastRect &&
         currentDpr === this._lastDpr &&
+        offset.x === this._lastOffsetX &&
+        offset.y === this._lastOffsetY &&
+        occluded === this._lastOccluded &&
         Math.round(rect.left) === Math.round(this._lastRect.left) &&
         Math.round(rect.top) === Math.round(this._lastRect.top) &&
         Math.round(rect.width) === Math.round(this._lastRect.width) &&
@@ -167,14 +272,23 @@ export class CoordinateTracker {
     }
     this._lastRect = rect;
     this._lastDpr = currentDpr;
+    this._lastOffsetX = offset.x;
+    this._lastOffsetY = offset.y;
+    this._lastOccluded = occluded;
+
+    // Hide OneNote when code block is occluded by another UI element
+    if (occluded) {
+      this._callback(-10000, -10000, 1, 1);
+      return;
+    }
 
     // Hide OneNote when code block is mostly out of view
     // Allow some overflow but hide when significantly off-screen
     const headerHeight = 40;  /* Minimum visible portion */
-    const mostlyInViewport = 
+    const mostlyInViewport =
       rect.bottom > headerHeight &&  /* At least headerHeight pixels visible from top */
       rect.top < window.innerHeight - headerHeight &&  /* At least headerHeight pixels visible from bottom */
-      rect.right > 0 && 
+      rect.right > 0 &&
       rect.left < window.innerWidth;
 
     if (!mostlyInViewport) {
@@ -187,46 +301,65 @@ export class CoordinateTracker {
     // currentDpr already defined at top of update()
 
     // Account for border width: getBoundingClientRect() returns outer border edge,
-    // but OneNote should align to the inner content area (inside the border)
-    const style = getComputedStyle(this._container);
-    const borderLeft = parseFloat(style.borderLeftWidth) || 0;
-    const borderTop = parseFloat(style.borderTopWidth) || 0;
-    const borderRight = parseFloat(style.borderRightWidth) || 0;
+    // but OneNote should align to the inner content area (inside the border).
+    // Borders rarely change — only re-read when container width differs from cached value.
+    if (this._cachedBorderWidth < 0 || Math.round(rect.width) !== this._cachedBorderWidth) {
+      const style = getComputedStyle(this._container);
+      this._cachedBorderLeft = parseFloat(style.borderLeftWidth) || 0;
+      this._cachedBorderTop = parseFloat(style.borderTopWidth) || 0;
+      this._cachedBorderRight = parseFloat(style.borderRightWidth) || 0;
+      this._cachedBorderWidth = Math.round(rect.width);
+    }
+    const borderLeft = this._cachedBorderLeft;
+    const borderTop = this._cachedBorderTop;
+    const borderRight = this._cachedBorderRight;
 
     // Calculate where OneNote window would be positioned (physical pixels)
     // Offset inward by border width, reduce width by left+right borders
     const physLeft = Math.round((rect.left + borderLeft) * currentDpr);
     const physTop = Math.round((rect.top + borderTop) * currentDpr);
-    const physWidth = Math.round((rect.width - borderLeft - borderRight) * currentDpr);
-    const embedHeight = Math.max(400, Math.min(1200, Math.round((rect.width - borderLeft - borderRight) * (2/3) * currentDpr)));
-    const oneNoteTop = physTop + this._offset.y;
+    const cssWidth = rect.width - borderLeft - borderRight;
+    const physWidth = Math.round(cssWidth * currentDpr);
+
+    // Height: match embedContainer's CSS pixel calculation, then convert to physical pixels
+    // embedContainer height = clamp(cssWidth * aspectRatio, 400, 1200) in CSS pixels
+    const embedHeightCss = Math.max(400, Math.min(1200, Math.round(cssWidth * this._aspectRatio)));
+    const embedHeight = Math.round(embedHeightCss * currentDpr);
+    const oneNoteTop = physTop + offset.y;
     const oneNoteBottom = oneNoteTop + embedHeight;
 
-    // Check if OneNote window would overflow screen boundaries
-    // screen.availWidth/availHeight may be in CSS pixels in Chromium with DPR != 1,
-    // so multiply by DPR to convert to physical pixels (matching oneNoteTop etc.)
+    // Check if OneNote window would overflow screen or Obsidian window boundaries
+    // Screen boundaries (physical pixels)
     const screen = window.screen as any;
     const screenLeft = (screen.availLeft ?? 0) * currentDpr;
     const screenTop = (screen.availTop ?? 0) * currentDpr;
     const screenRight = screenLeft + (window.screen.availWidth || window.innerWidth) * currentDpr;
     const screenBottom = screenTop + (window.screen.availHeight || window.innerHeight) * currentDpr;
 
-    // Hide OneNote if it would overflow above screen or below screen
-    if (oneNoteTop < screenTop || oneNoteBottom > screenBottom ||
-        physLeft + this._offset.x < screenLeft ||
-        physLeft + this._offset.x + physWidth > screenRight) {
-      console.log(`[CoordinateTracker] Hiding: OneNote would overflow (top=${oneNoteTop}, bottom=${oneNoteBottom}, screen=${screenTop}-${screenBottom})`);
+    // Obsidian window boundaries (physical pixels)
+    const obsidianLeft = Math.round(window.screenX * currentDpr);
+    const obsidianTop = Math.round(window.screenY * currentDpr);
+    const obsidianRight = obsidianLeft + Math.round(window.outerWidth * currentDpr);
+    const obsidianBottom = obsidianTop + Math.round(window.outerHeight * currentDpr);
+
+    // Use the more restrictive boundaries (intersection of screen and Obsidian window)
+    const boundLeft = Math.max(screenLeft, obsidianLeft);
+    const boundTop = Math.max(screenTop, obsidianTop);
+    const boundRight = Math.min(screenRight, obsidianRight);
+    const boundBottom = Math.min(screenBottom, obsidianBottom);
+
+    // Hide OneNote if it would overflow
+    if (oneNoteTop < boundTop || oneNoteBottom > boundBottom ||
+        physLeft + offset.x < boundLeft ||
+        physLeft + offset.x + physWidth > boundRight) {
       this._callback(-10000, -10000, 1, 1);
       return;
     }
 
     // Safe to show OneNote (all values in physical pixels)
-    this._callback(
-      physLeft + this._offset.x,
-      oneNoteTop,
-      physWidth,
-      embedHeight
-    );
+    const finalX = physLeft + offset.x;
+    const finalY = oneNoteTop;
+    this._callback(finalX, finalY, physWidth, embedHeight);
   }
 
   /** Remove all listeners and stop tracking. */
@@ -240,6 +373,7 @@ export class CoordinateTracker {
     }
 
     window.removeEventListener('scroll', this._scrollHandler, true);
+    window.removeEventListener('resize', this._resizeHandler);
     for (const ancestor of this._scrollAncestors) {
       ancestor.removeEventListener('scroll', this._scrollHandler, true);
     }

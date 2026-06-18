@@ -5,10 +5,12 @@ import { OneNoteCodeBlockRenderer } from './onenote-codeblock';
 
 export interface OneNotePluginSettings {
   defaultNotebook: string;
+  embedAspectRatio: number;
 }
 
 const DEFAULT_SETTINGS: OneNotePluginSettings = {
   defaultNotebook: '',
+  embedAspectRatio: 0.67,
 };
 
 export const ONE_NOTE_VIEW_TYPE = 'onenote-embed-view';
@@ -95,7 +97,14 @@ export default class OneNoteIntegrationPlugin extends Plugin {
     this.app.workspace.detachLeavesOfType(ONE_NOTE_VIEW_TYPE);
     // Release embedded OneNote window on plugin unload
     if (this.localOneNoteService) {
+      // Try async detach, but force kill if it doesn't complete quickly
       this.localOneNoteService.detachOneNoteWindow().catch(() => {});
+      // Sync fallback: force stop after 100ms if detach hasn't completed
+      setTimeout(() => {
+        try {
+          this.localOneNoteService?.forceStopEmbedManager();
+        } catch {}
+      }, 100);
     }
   }
 
@@ -189,6 +198,18 @@ class OneNoteSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.defaultNotebook)
         .onChange(async (value) => {
           this.plugin.settings.defaultNotebook = value;
+          await this.plugin.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName('Embed Aspect Ratio')
+      .setDesc('Height-to-width ratio for embedded OneNote blocks (e.g. 0.67 = 2:3). Reload note to apply.')
+      .addSlider(slider => slider
+        .setLimits(0.3, 2.0, 0.01)
+        .setValue(this.plugin.settings.embedAspectRatio)
+        .setDynamicTooltip()
+        .onChange(async (value) => {
+          this.plugin.settings.embedAspectRatio = value;
           await this.plugin.saveSettings();
         }));
   }

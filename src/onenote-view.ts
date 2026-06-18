@@ -33,8 +33,6 @@ export class OneNoteEmbedView extends ItemView {
 
     // Create header
     const headerDiv = container.createDiv({ cls: 'onenote-header' });
-    headerDiv.style.padding = '10px';
-    headerDiv.style.borderBottom = '1px solid var(--background-modifier-border)';
 
     const refreshButton = new ButtonComponent(headerDiv)
       .setButtonText('Load Notebooks')
@@ -49,12 +47,19 @@ export class OneNoteEmbedView extends ItemView {
 
     // Create content area
     const contentDiv = container.createDiv({ cls: 'onenote-content' });
-    contentDiv.style.padding = '10px';
-    contentDiv.style.overflowY = 'auto';
-    contentDiv.style.height = 'calc(100% - 60px)';
 
     // Load notebooks
     await this.loadNotebooks(contentDiv);
+  }
+
+  /** Create a clickable list item with unified styling. */
+  private renderListItem(
+    parent: HTMLElement, text: string, onClick: () => void | Promise<void>
+  ): HTMLElement {
+    const item = parent.createDiv({ cls: 'onenote-list-item' });
+    item.createSpan({ text });
+    item.addEventListener('click', onClick);
+    return item;
   }
 
   async loadNotebooks(container: HTMLElement) {
@@ -172,26 +177,9 @@ export class OneNoteEmbedView extends ItemView {
       const notebookList = container.createDiv({ cls: 'onenote-notebook-list' });
 
       for (const notebook of notebooks) {
-        const notebookItem = notebookList.createDiv({ cls: 'onenote-notebook-item' });
-        notebookItem.style.padding = '8px';
-        notebookItem.style.marginBottom = '4px';
-        notebookItem.style.borderRadius = '4px';
-        notebookItem.style.cursor = 'pointer';
-        notebookItem.style.backgroundColor = 'var(--background-secondary)';
-
-        notebookItem.createSpan({ text: notebook.name });
-
-        notebookItem.addEventListener('click', async () => {
+        this.renderListItem(notebookList, notebook.name, async () => {
           this.currentNotebook = notebook.id;
           await this.loadSections(notebook.id, container);
-        });
-
-        notebookItem.addEventListener('mouseenter', () => {
-          notebookItem.style.backgroundColor = 'var(--background-modifier-hover)';
-        });
-
-        notebookItem.addEventListener('mouseleave', () => {
-          notebookItem.style.backgroundColor = 'var(--background-secondary)';
         });
       }
     } catch (error: any) {
@@ -227,26 +215,9 @@ export class OneNoteEmbedView extends ItemView {
       const sectionList = container.createDiv({ cls: 'onenote-section-list' });
 
       for (const section of sections) {
-        const sectionItem = sectionList.createDiv({ cls: 'onenote-section-item' });
-        sectionItem.style.padding = '8px';
-        sectionItem.style.marginBottom = '4px';
-        sectionItem.style.borderRadius = '4px';
-        sectionItem.style.cursor = 'pointer';
-        sectionItem.style.backgroundColor = 'var(--background-secondary)';
-
-        sectionItem.createSpan({ text: section.name });
-
-        sectionItem.addEventListener('click', async () => {
+        this.renderListItem(sectionList, section.name, async () => {
           this.currentSection = section.id;
           await this.loadPages(section.id, container);
-        });
-
-        sectionItem.addEventListener('mouseenter', () => {
-          sectionItem.style.backgroundColor = 'var(--background-modifier-hover)';
-        });
-
-        sectionItem.addEventListener('mouseleave', () => {
-          sectionItem.style.backgroundColor = 'var(--background-secondary)';
         });
       }
     } catch (error: any) {
@@ -296,25 +267,11 @@ export class OneNoteEmbedView extends ItemView {
 
       for (const page of pages) {
         const pageItem = pageList.createDiv({ cls: 'onenote-page-item' });
-        pageItem.style.padding = '8px';
-        pageItem.style.marginBottom = '4px';
-        pageItem.style.borderRadius = '4px';
-        pageItem.style.cursor = 'pointer';
-        pageItem.style.backgroundColor = 'var(--background-secondary)';
-
         pageItem.createSpan({ text: page.title || 'Untitled Page' });
 
         pageItem.addEventListener('click', async () => {
           this.currentPage = page.id;
           await this.displayPage(page, container);
-        });
-
-        pageItem.addEventListener('mouseenter', () => {
-          pageItem.style.backgroundColor = 'var(--background-modifier-hover)';
-        });
-
-        pageItem.addEventListener('mouseleave', () => {
-          pageItem.style.backgroundColor = 'var(--background-secondary)';
         });
       }
     } catch (error: any) {

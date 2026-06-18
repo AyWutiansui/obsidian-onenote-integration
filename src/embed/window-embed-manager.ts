@@ -46,7 +46,6 @@ export class WindowEmbedManager {
 
     const exePath = this.getExePath();
     const args = obsHwnd ? ['embed', hwnd, obsHwnd] : ['embed', hwnd];
-    console.log('[WinEmbed] Spawning:', exePath, ...args);
 
     return new Promise<string>((resolve, reject) => {
       const child = spawn(exePath, args, {
@@ -62,7 +61,14 @@ export class WindowEmbedManager {
       let settled = false;
 
       child.stderr?.on('data', (data: Buffer) => {
-        console.log('[WinEmbed] stderr:', data.toString().trim());
+        const msg = data.toString().trim();
+        if (!msg) return;
+        // C++ exe uses stderr for diagnostics (OVERLAY, REPARENT, REPOSITION etc.)
+        // Only log as error if it contains actual error indicators
+        const lower = msg.toLowerCase();
+        if (lower.includes('error') || lower.includes('fail') || lower.includes('err:')) {
+          console.error('[WinEmbed] stderr:', msg);
+        }
       });
 
       child.stdout?.on('data', (data: Buffer) => {
@@ -78,8 +84,6 @@ export class WindowEmbedManager {
             newlineIndex = this._stdoutBuffer.indexOf('\n');
             continue;
           }
-
-          console.log('[WinEmbed] stdout:', line);
 
           if (!settled) {
             settled = true;
@@ -113,7 +117,6 @@ export class WindowEmbedManager {
       });
 
       child.on('exit', (code: number | null) => {
-        console.log('[WinEmbed] process exited, code:', code);
         this._child = null;
         this._running = false;
         if (this._pendingReparentReject) {
@@ -142,14 +145,14 @@ export class WindowEmbedManager {
         }
       });
 
-      // Timeout after 15 seconds
+      // Timeout after 10 seconds
       setTimeout(() => {
         if (!settled) {
           settled = true;
           this.stop();
-          reject(new Error('Embed timed out after 15s'));
+          reject(new Error('Embed timed out after 10s'));
         }
-      }, 15000);
+      }, 10000);
     });
   }
 
@@ -181,7 +184,6 @@ export class WindowEmbedManager {
       try {
         const cmd = hostHwnd ? `REPARENT ${hostHwnd}\n` : 'REPARENT\n';
         this._child!.stdin!.write(cmd);
-        console.log('[WinEmbed] REPARENT command sent');
       } catch (err) {
         clearTimeout(timeout);
         this._pendingReparentResolve = null;
@@ -216,11 +218,8 @@ export class WindowEmbedManager {
    */
   async detach(): Promise<void> {
     if (!this._child) {
-      console.log('[WinEmbed] detach called but no child process');
       return;
     }
-
-    console.log('[WinEmbed] Detaching — sending DETACH then EXIT');
 
     const child = this._child;
 
@@ -237,7 +236,6 @@ export class WindowEmbedManager {
         clearTimeout(timeout);
         this._child = null;
         this._running = false;
-        console.log('[WinEmbed] detach completed (process exited)');
         resolve();
       });
 
