@@ -80,12 +80,70 @@
   padding: 10px;
   border-bottom: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.onenote-header .onenote-platform-info {
+  margin-left: auto;
+  font-size: 0.85em;
+  color: var(--text-muted);
 }
 
 .onenote-content {
   padding: 10px;
   overflow-y: auto;
   flex: 1;
+}
+
+/* ===== Search Bar ===== */
+.onenote-search-bar {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-shrink: 0;
+}
+
+.onenote-search-bar input {
+  width: 100%;
+}
+
+.onenote-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.onenote-search-result {
+  padding: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  background-color: var(--background-secondary);
+  transition: background-color 0.1s ease;
+}
+
+.onenote-search-result:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.onenote-search-path {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-bottom: 2px;
+}
+
+.onenote-search-path-nb {
+  color: var(--text-faint);
+}
+
+.onenote-search-path-sec {
+  color: var(--text-muted);
+}
+
+.onenote-search-title {
+  font-weight: 500;
+  color: var(--text-normal);
 }
 
 /* List items — unified style for notebook/section/page items in sidebar */
@@ -96,10 +154,23 @@
   cursor: pointer;
   background-color: var(--background-secondary);
   transition: background-color 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .onenote-list-item:hover {
   background-color: var(--background-modifier-hover);
+}
+
+.onenote-item-count {
+  font-size: 0.75em;
+  color: var(--text-faint);
+  background: var(--background-modifier-hover);
+  border-radius: 10px;
+  padding: 2px 8px;
+  min-width: 20px;
+  text-align: center;
 }
 
 /* Page list specific */
@@ -114,10 +185,20 @@
   cursor: pointer;
   background-color: var(--background-secondary);
   transition: background-color 0.1s ease;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .onenote-page-item:hover {
   background-color: var(--background-modifier-hover);
+}
+
+.onenote-item-date {
+  font-size: 0.75em;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  margin-left: 8px;
 }
 
 /* ===== Page Selector (code block dropdown) ===== */
@@ -156,10 +237,41 @@
 /* ===== Messages ===== */
 .onenote-error-message {
   color: var(--text-error);
-  padding: 10px;
+  padding: 15px;
   background-color: var(--background-modifier-error);
-  border-radius: 4px;
+  border-radius: 6px;
   margin: 10px 0;
+}
+
+.onenote-error-title {
+  margin-top: 0;
+  color: inherit; /* inherits from parent error-message or warning context */
+}
+
+.onenote-error-title--warning {
+  margin-top: 0;
+  color: var(--text-warning);
+}
+
+.onenote-checklist {
+  margin-left: 20px;
+  padding-left: 0;
+}
+
+.onenote-hint-text {
+  font-style: italic;
+  margin-top: 10px;
+}
+
+.onenote-steps-label {
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.onenote-steps-list {
+  margin-left: 20px;
+  line-height: 1.8;
+  padding-left: 0;
 }
 
 .onenote-info-message {
@@ -174,6 +286,59 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 8px;
   padding: 20px;
   color: var(--text-muted);
+}
+
+/* ===== Loading Spinner ===== */
+.onenote-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--text-muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: onenote-spin 0.8s linear infinite;
+}
+
+@keyframes onenote-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ===== Breadcrumb Navigation ===== */
+.onenote-breadcrumb {
+  padding: 6px 0;
+  margin-bottom: 8px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.onenote-breadcrumb-item {
+  cursor: pointer;
+  color: var(--text-accent);
+  transition: color 0.15s ease;
+}
+
+.onenote-breadcrumb-item:hover {
+  color: var(--text-accent-hover);
+  text-decoration: underline;
+}
+
+.onenote-breadcrumb-sep {
+  color: var(--text-faint);
+  margin: 0 2px;
+}
+
+.onenote-breadcrumb-current {
+  color: var(--text-normal);
+  font-weight: 500;
+}
+
+/* ===== Page Actions ===== */
+.onenote-page-actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
 }

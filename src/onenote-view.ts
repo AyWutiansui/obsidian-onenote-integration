@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, Notice, ButtonComponent } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, ButtonComponent, TextComponent } from 'obsidian';
 import { ONE_NOTE_VIEW_TYPE } from './main';
 import OneNoteIntegrationPlugin from './main';
 import { LocalOneNoteNotebook, LocalOneNoteSection, LocalOneNotePage } from './types';
@@ -8,6 +8,10 @@ export class OneNoteEmbedView extends ItemView {
   private currentNotebook: string | null = null;
   private currentSection: string | null = null;
   private currentPage: string | null = null;
+  private currentNotebookName: string = '';
+  private currentSectionName: string = '';
+  private currentPageName: string = '';
+  private contentDiv: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: OneNoteIntegrationPlugin) {
     super(leaf);
@@ -34,32 +38,194 @@ export class OneNoteEmbedView extends ItemView {
     // Create header
     const headerDiv = container.createDiv({ cls: 'onenote-header' });
 
-    const refreshButton = new ButtonComponent(headerDiv)
+    new ButtonComponent(headerDiv)
       .setButtonText('Load Notebooks')
       .onClick(async () => {
-        await this.loadNotebooks(container);
+        await this.loadNotebooks(this.contentDiv!);
+      });
+
+    // Add cache refresh button to invalidate the 5-min hierarchy cache
+    new ButtonComponent(headerDiv)
+      .setButtonText('↻ Refresh')
+      .setTooltip('Refresh notebook list (clear cache)')
+      .onClick(async () => {
+        const svc = this.plugin.getOneNoteLocalService();
+        if (svc) {
+          svc.invalidateCache();
+          console.log('[OneNote] Hierarchy cache invalidated');
+        }
+        await this.loadNotebooks(this.contentDiv!);
       });
 
     const platformInfo = this.plugin.getOneNoteLocalService()?.getPlatformInfo();
     headerDiv.createSpan({
-      text: ` (Local Mode - ${platformInfo?.platform || 'unknown'})`
+      cls: 'onenote-platform-info',
+      text: `Local Mode - ${platformInfo?.platform || 'unknown'}`
     });
 
+    // Create search bar
+    const searchDiv = container.createDiv({ cls: 'onenote-search-bar' });
+    let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+    new TextComponent(searchDiv)
+      .setPlaceholder('Search notebooks, sections, pages...')
+      .onChange((query) => {
+        if (searchTimeout) clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(() => this.performSearch(query, this.contentDiv!), 200);
+      });
+
     // Create content area
-    const contentDiv = container.createDiv({ cls: 'onenote-content' });
+    this.contentDiv = container.createDiv({ cls: 'onenote-content' });
 
     // Load notebooks
-    await this.loadNotebooks(contentDiv);
+    await this.loadNotebooks(this.contentDiv);
   }
 
   /** Create a clickable list item with unified styling. */
   private renderListItem(
-    parent: HTMLElement, text: string, onClick: () => void | Promise<void>
+    parent: HTMLElement, text: string, onClick: () => void | Promise<void>,
+    childCount?: number
   ): HTMLElement {
     const item = parent.createDiv({ cls: 'onenote-list-item' });
     item.createSpan({ text });
+    if (childCount !== undefined) {
+      const badge = item.createSpan({ cls: 'onenote-item-count' });
+      badge.textContent = `${childCount}`;
+    }
     item.addEventListener('click', onClick);
     return item;
+  }
+
+  /** Show a loading spinner with message. Returns the element for later removal. */
+  private showLoading(container: HTMLElement, message: string): HTMLElement {
+    const loadingDiv = container.createDiv({ cls: 'onenote-loading' });
+    const spinner = loadingDiv.createSpan({ cls: 'onenote-spinner' });
+    spinner.textContent = '';
+    loadingDiv.createSpan({ text: ` ${message}` });
+    return loadingDiv;
+  }
+
+  /** Render breadcrumb navigation showing the current hierarchy path. */
+  private renderBreadcrumb(container: HTMLElement): void {
+    const crumb = container.createDiv({ cls: 'onenote-breadcrumb' });
+
+    // Root: always clickable to go back to notebook list
+    const root = crumb.createSpan({ cls: 'onenote-breadcrumb-item' });
+    root.textContent = '📓 Notebooks';
+    root.addEventListener('click', () => {
+      this.currentNotebook = null;
+      this.currentNotebookName = '';
+      this.currentSection = null;
+      this.currentSectionName = '';
+      this.currentPage = null;
+      this.currentPageName = '';
+      this.loadNotebooks(this.contentDiv!);
+    });
+
+    if (this.currentNotebookName) {
+      crumb.createSpan({ cls: 'onenote-breadcrumb-sep', text: ' › ' });
+      const nb = crumb.createSpan({ cls: 'onenote-breadcrumb-item' });
+      nb.textContent = this.currentNotebookName;
+      nb.addEventListener('click', () => {
+        if (this.currentNotebook) {
+          this.currentSection = null;
+          this.currentSectionName = '';
+          this.currentPage = null;
+          this.currentPageName = '';
+          this.loadSections(this.currentNotebook, this.contentDiv!);
+        }
+      });
+    }
+
+    if (this.currentSectionName) {
+      crumb.createSpan({ cls: 'onenote-breadcrumb-sep', text: ' › ' });
+      const sec = crumb.createSpan({ cls: 'onenote-breadcrumb-item' });
+      sec.textContent = this.currentSectionName;
+      sec.addEventListener('click', () => {
+        if (this.currentSection) {
+          this.currentPage = null;
+          this.currentPageName = '';
+          this.loadPages(this.currentSection, this.contentDiv!);
+        }
+      });
+    }
+
+    if (this.currentPageName) {
+      crumb.createSpan({ cls: 'onenote-breadcrumb-sep', text: ' › ' });
+      crumb.createSpan({ cls: 'onenote-breadcrumb-current', text: this.currentPageName });
+    }
+  }
+
+  /** Search the hierarchy cache and render matching items. */
+  private performSearch(query: string, container: HTMLElement): void {
+    const trimmed = query.trim().toLowerCase();
+    if (!trimmed) {
+      // Empty query: reload normal notebook view
+      this.loadNotebooks(container);
+      return;
+    }
+
+    container.empty();
+
+    const service = this.plugin.getOneNoteLocalService();
+    if (!service) return;
+
+    // Access cached hierarchy via getNotebooks (returns from cache if fresh)
+    service.getNotebooks().then(notebooks => {
+      container.empty();
+      container.createEl('h3', { text: `Search results for "${query.trim()}"` });
+
+      let resultCount = 0;
+      const resultsDiv = container.createDiv({ cls: 'onenote-search-results' });
+
+      for (const nb of notebooks) {
+        const nbMatch = nb.name.toLowerCase().includes(trimmed);
+
+        for (const sec of (nb.sections || [])) {
+          const secMatch = sec.name.toLowerCase().includes(trimmed);
+
+          for (const page of (sec.pages || [])) {
+            const pageTitle = page.title || 'Untitled Page';
+            const pageMatch = pageTitle.toLowerCase().includes(trimmed);
+
+            if (nbMatch || secMatch || pageMatch) {
+              resultCount++;
+              const item = resultsDiv.createDiv({ cls: 'onenote-search-result' });
+
+              const pathSpan = item.createDiv({ cls: 'onenote-search-path' });
+              pathSpan.createSpan({ text: nb.name, cls: 'onenote-search-path-nb' });
+              pathSpan.createSpan({ text: ' › ', cls: 'onenote-breadcrumb-sep' });
+              pathSpan.createSpan({ text: sec.name, cls: 'onenote-search-path-sec' });
+              pathSpan.createSpan({ text: ' › ', cls: 'onenote-breadcrumb-sep' });
+
+              const titleSpan = item.createSpan({ cls: 'onenote-search-title' });
+              titleSpan.textContent = pageTitle;
+
+              item.addEventListener('click', async () => {
+                this.currentNotebook = nb.id;
+                this.currentNotebookName = nb.name;
+                this.currentSection = sec.id;
+                this.currentSectionName = sec.name;
+                this.currentPage = page.id;
+                this.currentPageName = pageTitle;
+                await this.displayPage(page, container);
+              });
+            }
+          }
+        }
+      }
+
+      if (resultCount === 0) {
+        container.createEl('p', {
+          text: 'No matching pages found.',
+          cls: 'onenote-hint-text'
+        });
+      }
+    }).catch(err => {
+      container.createEl('div', {
+        cls: 'onenote-error-message',
+        text: `Search failed: ${err.message}`
+      });
+    });
   }
 
   async loadNotebooks(container: HTMLElement) {
@@ -74,38 +240,35 @@ export class OneNoteEmbedView extends ItemView {
     try {
       container.empty();
 
-      // Show loading message
-      const loadingDiv = container.createDiv({ cls: 'onenote-loading' });
-      loadingDiv.textContent = 'Checking for OneNote application...';
+      // Show loading spinner
+      const loadingEl = this.showLoading(container, 'Checking for OneNote application...');
 
       // Check OneNote availability
       const available = await service.checkOneNoteAvailability();
 
-      // Clear loading message
-      container.empty();
+      // Clear loading spinner
+      loadingEl.detach();
 
       if (!available) {
         const errorDiv = container.createDiv({ cls: 'onenote-error-message' });
-        errorDiv.style.padding = '15px';
 
         errorDiv.createEl('h4', {
           text: 'OneNote Application Not Found',
-          attr: { style: 'margin-top: 0; color: var(--text-error);' }
+          cls: 'onenote-error-title'
         });
 
         errorDiv.createEl('p', {
           text: 'The plugin could not detect OneNote on your system. Please check:'
         });
 
-        const checklist = errorDiv.createEl('ul');
-        checklist.style.marginLeft = '20px';
+        const checklist = errorDiv.createEl('ul', { cls: 'onenote-checklist' });
         checklist.createEl('li', { text: 'OneNote is installed on your computer' });
         checklist.createEl('li', { text: 'OneNote is currently running (open the application)' });
         checklist.createEl('li', { text: 'You are using OneNote Desktop (not the UWP version from Microsoft Store)' });
 
         errorDiv.createEl('p', {
           text: 'Note: The free "OneNote for Windows 10" may not work. Try the full OneNote desktop app.',
-          attr: { style: 'font-style: italic; margin-top: 10px;' }
+          cls: 'onenote-hint-text'
         });
 
         new ButtonComponent(errorDiv)
@@ -129,14 +292,30 @@ export class OneNoteEmbedView extends ItemView {
 
       const notebooks = await service.getNotebooks();
 
+      // Auto-navigate to default notebook if configured
+      const defaultName = this.plugin.settings.defaultNotebook.trim();
+      if (defaultName) {
+        const match = notebooks.find(nb =>
+          nb.name.toLowerCase() === defaultName.toLowerCase()
+        );
+        if (match) {
+          this.currentNotebook = match.id;
+          this.currentNotebookName = match.name;
+          this.currentSection = null;
+          this.currentSectionName = '';
+          this.currentPage = null;
+          this.currentPageName = '';
+          await this.loadSections(match.id, container);
+          return;
+        }
+      }
+
       if (notebooks.length === 0) {
         const errorDiv = container.createDiv({ cls: 'onenote-error-message' });
-        errorDiv.style.padding = '20px';
-        errorDiv.style.borderRadius = '6px';
 
         errorDiv.createEl('h4', {
           text: 'No Notebooks Found',
-          attr: { style: 'margin-top: 0; color: var(--text-warning);' }
+          cls: 'onenote-error-title--warning'
         });
 
         errorDiv.createEl('p', {
@@ -146,12 +325,10 @@ export class OneNoteEmbedView extends ItemView {
         const stepsDiv = errorDiv.createDiv();
         stepsDiv.createEl('p', {
           text: 'How to create your first notebook:',
-          attr: { style: 'font-weight: bold; margin-bottom: 10px;' }
+          cls: 'onenote-steps-label'
         });
 
-        const stepsList = stepsDiv.createEl('ol');
-        stepsList.style.marginLeft = '20px';
-        stepsList.style.lineHeight = '1.8';
+        const stepsList = stepsDiv.createEl('ol', { cls: 'onenote-steps-list' });
         stepsList.createEl('li', { text: 'Open Microsoft OneNote' });
         stepsList.createEl('li', { text: 'Click File > New' });
         stepsList.createEl('li', { text: 'Choose a location (OneDrive or This PC)' });
@@ -179,8 +356,13 @@ export class OneNoteEmbedView extends ItemView {
       for (const notebook of notebooks) {
         this.renderListItem(notebookList, notebook.name, async () => {
           this.currentNotebook = notebook.id;
+          this.currentNotebookName = notebook.name;
+          this.currentSection = null;
+          this.currentSectionName = '';
+          this.currentPage = null;
+          this.currentPageName = '';
           await this.loadSections(notebook.id, container);
-        });
+        }, notebook.sections?.length);
       }
     } catch (error: any) {
       container.createEl('div', {
@@ -197,28 +379,29 @@ export class OneNoteEmbedView extends ItemView {
     try {
       container.empty();
 
-      new ButtonComponent(container)
-        .setButtonText('< Back to Notebooks')
-        .onClick(() => {
-          this.loadNotebooks(container);
-        });
-
-      container.createEl('h3', { text: 'Select a Section' });
+      // Breadcrumb + loading
+      this.renderBreadcrumb(container);
+      const loadingEl = this.showLoading(container, 'Loading sections...');
 
       const sections = await service.getSections(notebookId);
+      loadingEl.detach();
 
       if (sections.length === 0) {
         container.createEl('p', { text: 'No sections found in this notebook' });
         return;
       }
 
+      container.createEl('h3', { text: 'Select a Section' });
       const sectionList = container.createDiv({ cls: 'onenote-section-list' });
 
       for (const section of sections) {
         this.renderListItem(sectionList, section.name, async () => {
           this.currentSection = section.id;
+          this.currentSectionName = section.name;
+          this.currentPage = null;
+          this.currentPageName = '';
           await this.loadPages(section.id, container);
-        });
+        }, section.pages?.length);
       }
     } catch (error: any) {
       container.createEl('div', {
@@ -235,21 +418,15 @@ export class OneNoteEmbedView extends ItemView {
     try {
       container.empty();
 
-      new ButtonComponent(container)
-        .setButtonText('< Back to Sections')
-        .onClick(() => {
-          if (this.currentNotebook) {
-            this.loadSections(this.currentNotebook, container);
-          }
-        });
-
-      container.createEl('h3', { text: 'Select a Page' });
+      // Breadcrumb + loading
+      this.renderBreadcrumb(container);
+      const loadingEl = this.showLoading(container, 'Loading pages...');
 
       const pages = await service.getPages(sectionId);
+      loadingEl.detach();
 
       if (pages.length === 0) {
         const infoDiv = container.createDiv({ cls: 'onenote-info-message' });
-        infoDiv.style.padding = '15px';
         infoDiv.createEl('p', { text: 'No pages found in this section.' });
 
         new ButtonComponent(infoDiv)
@@ -263,14 +440,28 @@ export class OneNoteEmbedView extends ItemView {
         return;
       }
 
+      container.createEl('h3', { text: 'Select a Page' });
       const pageList = container.createDiv({ cls: 'onenote-page-list' });
 
       for (const page of pages) {
         const pageItem = pageList.createDiv({ cls: 'onenote-page-item' });
         pageItem.createSpan({ text: page.title || 'Untitled Page' });
 
+        if (page.lastModifiedTime) {
+          const dateSpan = pageItem.createSpan({ cls: 'onenote-item-date' });
+          try {
+            const d = new Date(page.lastModifiedTime);
+            dateSpan.textContent = d.toLocaleDateString(undefined, {
+              month: 'short', day: 'numeric', year: d.getFullYear() !== new Date().getFullYear() ? 'numeric' : undefined
+            });
+          } catch {
+            // Invalid date string, skip
+          }
+        }
+
         pageItem.addEventListener('click', async () => {
           this.currentPage = page.id;
+          this.currentPageName = page.title || 'Untitled Page';
           await this.displayPage(page, container);
         });
       }
@@ -285,31 +476,41 @@ export class OneNoteEmbedView extends ItemView {
   async displayPage(page: LocalOneNotePage, container: HTMLElement) {
     container.empty();
 
-    new ButtonComponent(container)
-      .setButtonText('< Back to Pages')
-      .onClick(() => {
-        if (this.currentSection) {
-          this.loadPages(this.currentSection, container);
-        }
-      });
+    // Breadcrumb
+    this.renderBreadcrumb(container);
 
     const service = this.plugin.getOneNoteLocalService();
 
+    // Action buttons row
+    const actions = container.createDiv({ cls: 'onenote-page-actions' });
+
     if (page.id) {
-      new ButtonComponent(container)
+      new ButtonComponent(actions)
         .setButtonText('Open in OneNote')
+        .setClass('mod-cta')
         .onClick(async () => {
           await service?.openPageInOneNote(page.id);
         });
     }
 
     try {
+      const loadingEl = this.showLoading(container, 'Loading page content...');
+
       const content = await service?.getPageContent(page.id);
+      loadingEl.detach();
+
       if (content) {
         const iframeContainer = container.createDiv({ cls: 'onenote-embed-container' });
+        // Wrap content in a complete HTML document for proper iframe rendering
+        const htmlShell = `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>body{font-family:system-ui,-apple-system,sans-serif;padding:12px;margin:0;color:#333;line-height:1.6}img{max-width:100%;height:auto}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ddd;padding:8px}</style>
+</head><body>${content}</body></html>`;
         iframeContainer.createEl('iframe', {
           cls: 'onenote-iframe',
-          attr: { srcdoc: content, frameborder: '0' }
+          attr: { srcdoc: htmlShell, frameborder: '0' }
         });
       } else {
         container.createEl('p', {

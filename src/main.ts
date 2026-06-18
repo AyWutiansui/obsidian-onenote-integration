@@ -192,7 +192,7 @@ class OneNoteSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName('Default Notebook')
-      .setDesc('Default OneNote notebook to open')
+      .setDesc('Automatically open this notebook when the OneNote sidebar loads. Enter the exact notebook name.')
       .addText(text => text
         .setPlaceholder('Notebook name')
         .setValue(this.plugin.settings.defaultNotebook)

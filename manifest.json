@@ -6,5 +6,5 @@
   "description": "Embed and edit OneNote notes in Obsidian",
   "author": "Qoder",
   "authorUrl": "",
-  "isDesktopOnly": false
+  "isDesktopOnly": true
 }

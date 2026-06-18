@@ -37,7 +37,7 @@ const buildOptions = {
   plugins: [
     copy({
       assets: {
-        from: ['./manifest.json', './styles.css', './get-notebooks.ps1', './onenote-repos.exe', './win-embed-overlay.exe'],
+        from: ['./manifest.json', './styles.css', './onenote-repos.exe', './win-embed-overlay.exe'],
         to: ['./']
       }
     })

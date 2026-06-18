@@ -123,3 +123,16 @@ export class Editor {
 }
 
 export class WorkspaceLeaf {}
+
+export class TextComponent {
+  private _el: HTMLInputElement;
+  constructor(containerEl: any) {
+    this._el = document.createElement('input');
+    if (containerEl && containerEl.appendChild) {
+      containerEl.appendChild(this._el);
+    }
+  }
+  setPlaceholder(_text: string): this { return this; }
+  setValue(_value: string): this { return this; }
+  onChange(_cb: (value: string) => void): this { return this; }
+}
