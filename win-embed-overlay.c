@@ -171,7 +171,8 @@ static int reparentIntoOverlay(HWND targetHwnd, HWND overlayHwnd) {
     LONG newExStyle = g_savedExStyle
         & ~(WS_EX_DLGMODALFRAME | WS_EX_WINDOWEDGE
             | WS_EX_CLIENTEDGE  | WS_EX_STATICEDGE
-            | WS_EX_APPWINDOW   | WS_EX_TOOLWINDOW);
+            | WS_EX_APPWINDOW   | WS_EX_TOOLWINDOW)
+        | WS_EX_NOACTIVATE;
 
     fprintf(stderr, "REPARENT: stripping frame → style=%lx exstyle=%lx\n", newStyle, newExStyle);
 
@@ -244,22 +245,25 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
         if (!g_overlayHwnd || !IsWindow(g_overlayHwnd)) return;
 
         UINT flags = SWP_NOACTIVATE;
+        HWND insertAfter = HWND_TOP;
         if (g_lastW == 0) {
             /* First call: show window and set z-order */
             flags |= SWP_SHOWWINDOW;
         } else {
             /* Subsequent calls: skip show + z-order (already set) */
             flags |= SWP_NOZORDER;
+            insertAfter = NULL;
         }
         if (w == g_lastW && h == g_lastH && g_lastW != 0) {
             flags |= SWP_NOSIZE;
             SetWindowPos(g_overlayHwnd, NULL, x, y, 0, 0, flags);
         } else {
-            SetWindowPos(g_overlayHwnd, HWND_TOP, x, y, w, h, flags);
+            SetWindowPos(g_overlayHwnd, insertAfter, x, y, w, h, flags);
         }
         if (w != g_lastW || h != g_lastH) {
             if (targetHwnd && IsWindow(targetHwnd)) {
-                SetWindowPos(targetHwnd, HWND_TOP, 0, 0, w, h, SWP_NOACTIVATE);
+                SetWindowPos(targetHwnd, NULL, 0, 0, w, h,
+                             SWP_NOACTIVATE | SWP_NOZORDER);
             }
             g_lastW = w;
             g_lastH = h;
@@ -267,8 +271,11 @@ static void repositionOverlay(HWND targetHwnd, int x, int y, int w, int h) {
     } else {
         /* Position-only mode: move target directly to screen coords */
         if (targetHwnd && IsWindow(targetHwnd)) {
-            SetWindowPos(targetHwnd, HWND_TOP, x, y, w, h,
-                         SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            UINT flags = SWP_NOACTIVATE | SWP_NOZORDER;
+            if (g_lastW == 0) flags |= SWP_SHOWWINDOW;
+            SetWindowPos(targetHwnd, NULL, x, y, w, h, flags);
+            g_lastW = w;
+            g_lastH = h;
         }
     }
 }

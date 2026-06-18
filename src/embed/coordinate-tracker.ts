@@ -62,6 +62,7 @@ export class CoordinateTracker {
   private _lastOffsetY: number = NaN;
   private _lastOccluded: boolean = false;
   private _disposed: boolean = false;
+  private _pendingRafUpdate: boolean = false;
   private _lastOcclusionCheck: number = 0;
   private _cachedBorderLeft: number = 0;
   private _cachedBorderTop: number = 0;
@@ -99,18 +100,26 @@ export class CoordinateTracker {
     window.addEventListener('resize', this._resizeHandler);
 
     // Strategy 3: MutationObserver on document body (sidebar toggles, class changes)
+    // NOTE: We intentionally exclude characterData — editor text changes (keystrokes)
+    // don't affect the embed container's position. ResizeObserver + scroll listeners
+    // already cover layout shifts from typing. Observing characterData caused every
+    // keystroke to trigger repositionOneNoteWindow, leading to focus-stealing bugs.
     this._mutationObserver = new MutationObserver((mutations) => {
-      // Check if any mutation might affect layout
       const affectsLayout = mutations.some(m =>
         m.type === 'attributes' && (
           m.attributeName === 'class' ||
           m.attributeName === 'style'
         ) ||
-        m.type === 'childList' ||
-        m.type === 'characterData'
+        m.type === 'childList'
       );
       if (affectsLayout) {
-        this.update();
+        // Debounce via RAF — coalesce rapid DOM mutations into one update per frame
+        if (this._pendingRafUpdate) return;
+        this._pendingRafUpdate = true;
+        requestAnimationFrame(() => {
+          this._pendingRafUpdate = false;
+          this.update();
+        });
       }
     });
     this._mutationObserver.observe(document.body, {
@@ -118,7 +127,7 @@ export class CoordinateTracker {
       attributeFilter: ['class', 'style'],
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: false
     });
 
     // Strategy 4: rAF polling as safety net (low frequency to avoid perf issues)

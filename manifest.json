@@ -1,7 +1,7 @@
 {
   "id": "obsidian-onenote-integration",
   "name": "OneNote Integration",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "minAppVersion": "1.0.0",
   "description": "Embed and edit OneNote notes in Obsidian",
   "author": "Qoder",

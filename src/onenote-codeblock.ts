@@ -65,6 +65,7 @@ export class OneNoteCodeBlockRenderer {
           // Live window embed (local mode)
           let cleanupEmbed: (() => Promise<void>) | null = null;
           let currentTracker: CoordinateTracker | null = null;
+          let lastFocusCheck = 0;
 
           // Detach any previously embedded window
           try { await localService.detachOneNoteWindow(); } catch {}
@@ -128,6 +129,20 @@ export class OneNoteCodeBlockRenderer {
             const tracker = new CoordinateTracker(embedContainer, (x, y, w, h) => {
               if (!localService.isActiveEmbedSession(embedSessionId)) return;
               localService.repositionOneNoteWindow(x, y, w, h);
+
+              // Focus watchdog: if the overlay reposition stole focus from the
+              // Obsidian editor, restore it. Throttled to once per 500ms to avoid
+              // overhead on every scroll/reposition event.
+              const now = Date.now();
+              if (now - lastFocusCheck > 500 && !document.hasFocus()) {
+                lastFocusCheck = now;
+                requestAnimationFrame(() => {
+                  const activeView = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+                  if (activeView?.editor) {
+                    (activeView.editor as any).focus?.();
+                  }
+                });
+              }
             }, aspectRatio, container, overhead);
             currentTracker = tracker;
 
