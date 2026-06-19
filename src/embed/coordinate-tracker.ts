@@ -261,8 +261,7 @@ export class CoordinateTracker {
       const hostHeight = embedCssHeight + this._hostExtraHeight;
       this._hostContainer.addClass('onenote-host-container');
       this._hostContainer.setCssProps({
-        '--onenote-host-height': `${hostHeight}px`,
-        'max-height': 'none'
+        '--onenote-host-height': `${hostHeight}px`
       });
     }
 
