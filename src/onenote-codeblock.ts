@@ -2,6 +2,18 @@ import { MarkdownPostProcessorContext, Notice, setIcon, MarkdownView, TFile, Mar
 import OneNoteIntegrationPlugin from './main';
 import { parseCodeBlockSource } from './utils/parse-codeblock-source';
 import { CoordinateTracker } from './embed/coordinate-tracker';
+import type { LocalOneNoteNotebook, LocalOneNotePage, LocalOneNoteSection } from './types';
+import type { OneNoteLocalService } from './local-onenote-service';
+
+type DebugWindow = Window & { __ONENOTE_DEBUG__?: boolean };
+
+function isDebugEnabled(): boolean {
+  return Boolean((window as DebugWindow).__ONENOTE_DEBUG__);
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 class OneNoteEmbedCleanupChild extends MarkdownRenderChild {
   private cleanup: (() => void | Promise<void>) | null = null;
@@ -28,7 +40,7 @@ export class OneNoteCodeBlockRenderer {
   async renderCodeBlock(source: string, el: HTMLElement, ctx: MarkdownPostProcessorContext) {
     try {
       // Debug logging (conditional, uses console.debug instead of sync file I/O)
-      if ((window as any).__ONENOTE_DEBUG__) {
+      if (isDebugEnabled()) {
         console.debug('[OneNote Embed] renderCodeBlock called, source:', source.substring(0, 100));
       }
 
@@ -92,7 +104,9 @@ export class OneNoteCodeBlockRenderer {
           let lastFocusCheck = 0;
 
           // Detach any previously embedded window
-          try { await localService.detachOneNoteWindow(); } catch {}
+          try { await localService.detachOneNoteWindow(); } catch {
+            // Ignore stale detach failures before starting a fresh embed.
+          }
           const embedSessionId = localService.beginEmbedSession();
           let currentSessionId: number = embedSessionId;
 
@@ -163,11 +177,11 @@ export class OneNoteCodeBlockRenderer {
           statusDiv.textContent = 'Embedding OneNote window...';
 
           try {
-            if ((window as any).__ONENOTE_DEBUG__) {
+            if (isDebugEnabled()) {
               console.debug(`[OneNote Embed] Attempting embed, pageId: ${pageId}`);
             }
             const hwnd = await localService.embedOneNoteWindow(pageId);
-            if ((window as any).__ONENOTE_DEBUG__) {
+            if (isDebugEnabled()) {
               console.debug(`[OneNote Embed] Embed SUCCESS, hwnd: ${hwnd}`);
             }
             statusDiv.remove();
@@ -183,12 +197,12 @@ export class OneNoteCodeBlockRenderer {
               // Obsidian editor, restore it. Throttled to once per 500ms to avoid
               // overhead on every scroll/reposition event.
               const now = Date.now();
-              if (now - lastFocusCheck > 500 && !document.hasFocus()) {
+              if (now - lastFocusCheck > 500 && !activeDocument.hasFocus()) {
                 lastFocusCheck = now;
-                requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
                   const activeView = this.plugin.app.workspace.getActiveViewOfType(MarkdownView);
                   if (activeView?.editor) {
-                    (activeView.editor as any).focus?.();
+                    (activeView.editor as MarkdownView['editor'] & { focus?: () => void }).focus?.();
                   }
                 });
               }
@@ -198,20 +212,20 @@ export class OneNoteCodeBlockRenderer {
             // Force position updates for the first 2 seconds — OneNote may
             // override our SetWindowPos during startup (first launch).
             for (const delay of [200, 500, 1000, 1500, 2000]) {
-              setTimeout(() => tracker.forceUpdate(), delay);
+              window.setTimeout(() => tracker.forceUpdate(), delay);
             }
 
             cleanupEmbed = async () => {
-              document.removeEventListener('mousemove', onMouseMove);
-              document.removeEventListener('mouseup', onMouseUp);
+              activeDocument.removeEventListener('mousemove', onMouseMove);
+              activeDocument.removeEventListener('mouseup', onMouseUp);
               window.removeEventListener('resize', onWindowResize);
               await doDetach();
               cleanupEmbed = null;
               cleanupChild.setCleanup(() => {});
             };
             cleanupChild.setCleanup(cleanupEmbed);
-          } catch (embedError: any) {
-            const msg = embedError.message || '';
+          } catch (embedError: unknown) {
+            const msg = getErrorMessage(embedError);
             console.warn(`[OneNote Embed] Embed FAILED: ${msg}`);
             localService.endEmbedSession(embedSessionId);
             statusDiv.empty();
@@ -294,11 +308,15 @@ export class OneNoteCodeBlockRenderer {
               let hwnd: string;
               try {
                 hwnd = await localService.embedOneNoteWindow(pageId, true);
-              } catch (firstError: any) {
-                console.warn('[OneNote Embed] Fast embed failed, cold start retry:', firstError.message);
+              } catch (firstError: unknown) {
+                console.warn('[OneNote Embed] Fast embed failed, cold start retry:', getErrorMessage(firstError));
                 statusDiv.textContent = 'Starting OneNote... (this may take a moment)';
-                try { this.openInOneNoteLocal(pageId); } catch {}
-                await new Promise(r => setTimeout(r, 20000));
+                try {
+                  this.openInOneNoteLocal(pageId, activeDocument);
+                } catch {
+                  // Ignore protocol fallback errors here; retry path handles failures.
+                }
+                await new Promise<void>((resolve) => window.setTimeout(resolve, 20000));
                 statusDiv.textContent = 'Embedding OneNote window...';
                 hwnd = await localService.embedOneNoteWindow(pageId, false);
               }
@@ -320,8 +338,8 @@ export class OneNoteCodeBlockRenderer {
 
               // Set up cleanup for this attachment
               cleanupEmbed = async () => {
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
+                activeDocument.removeEventListener('mousemove', onMouseMove);
+                activeDocument.removeEventListener('mouseup', onMouseUp);
                 window.removeEventListener('resize', onWindowResize);
                 await doDetach();
                 cleanupEmbed = null;
@@ -338,30 +356,32 @@ export class OneNoteCodeBlockRenderer {
               setIcon(toolbarDetachBtn, 'maximize-2');
               isAttached = true;
               new Notice('OneNote window re-attached');
-            } catch (error: any) {
+            } catch (error: unknown) {
               console.error('[OneNote Embed] Re-attach failed:', error);
               statusDiv.empty();
               const errIcon = statusDiv.createSpan({ cls: 'onenote-item-icon' });
               setIcon(errIcon, 'alert-circle');
-              statusDiv.createSpan({ text: `Failed to re-attach: ${error.message}` });
+              statusDiv.createSpan({ text: `Failed to re-attach: ${getErrorMessage(error)}` });
               statusDiv.addClass('onenote-embed-status--error');
             }
           };
 
           // Wire toolbar detach button
-          toolbarDetachBtn.addEventListener('click', async () => {
-            if (isTransitioning) return;
-            isTransitioning = true;
-            try {
-              if (isAttached) {
-                await doDetach();
-                new Notice('OneNote window detached');
-              } else {
-                await doAttach();
+          toolbarDetachBtn.addEventListener('click', () => {
+            void (async () => {
+              if (isTransitioning) return;
+              isTransitioning = true;
+              try {
+                if (isAttached) {
+                  await doDetach();
+                  new Notice('OneNote window detached');
+                } else {
+                  await doAttach();
+                }
+              } finally {
+                isTransitioning = false;
               }
-            } finally {
-              isTransitioning = false;
-            }
+            })();
           });
 
           // Resize handle drag logic
@@ -374,7 +394,7 @@ export class OneNoteCodeBlockRenderer {
             isResizing = true;
             startY = e.clientY;
             startHeight = embedContainer.offsetHeight;
-            document.body.setCssStyles({ cursor: 'ns-resize', userSelect: 'none' });
+            activeDocument.body.setCssStyles({ cursor: 'ns-resize', userSelect: 'none' });
             e.preventDefault();
           });
 
@@ -389,31 +409,31 @@ export class OneNoteCodeBlockRenderer {
           const onMouseUp = () => {
             if (!isResizing) return;
             isResizing = false;
-            document.body.setCssStyles({ cursor: '', userSelect: '' });
+            activeDocument.body.setCssStyles({ cursor: '', userSelect: '' });
             // Save new height for this session
             embedHeight = embedContainer.offsetHeight;
             if (currentTracker) currentTracker.forceUpdate();
           };
 
-          document.addEventListener('mousemove', onMouseMove);
-          document.addEventListener('mouseup', onMouseUp);
+          activeDocument.addEventListener('mousemove', onMouseMove);
+          activeDocument.addEventListener('mouseup', onMouseUp);
         } else {
           // No page ID - show page selector
           loadingDiv.remove();
           await this.createPageSelector(container, localService, el, ctx, source);
         }
-      } catch (error: any) {
+      } catch (error: unknown) {
         loadingDiv.remove();
         container.createEl('div', {
           cls: 'onenote-error-message',
-          text: `Error loading OneNote content: ${error.message}`
+          text: `Error loading OneNote content: ${getErrorMessage(error)}`
         });
       }
-    } catch (fatalError: any) {
+    } catch (fatalError: unknown) {
       console.error('[OneNote CodeBlock] FATAL error in renderCodeBlock:', fatalError);
       el.createEl('div', {
         cls: 'onenote-error-message',
-        text: `OneNote code block error: ${fatalError.message}`
+        text: `OneNote code block error: ${getErrorMessage(fatalError)}`
       });
     }
   }
@@ -517,42 +537,32 @@ export class OneNoteCodeBlockRenderer {
   /**
    * Open a page in the OneNote desktop app.
    */
-  private openInOneNoteLocal(pageId: string): void {
+  private openInOneNoteLocal(pageId: string, activeDocument?: Document): void {
     const cleanId = pageId.replace(/\s+/g, '');
     const url = `onenote:${cleanId}`;
     try {
-      const electron = require('electron');
-      if (electron?.shell?.openExternal) {
-        electron.shell.openExternal(url);
-        new Notice('Opening in OneNote...');
-        return;
-      }
-    } catch (e) {
-      console.warn('electron.shell.openExternal not available, trying fallback:', e);
-    }
-
-    try {
       window.open(url, '_blank');
       new Notice('Opening in OneNote...');
-    } catch (error: any) {
+    } catch {
       try {
-        const link = document.createElement('a');
+        const doc = activeDocument ?? document;
+        const link = doc.createElement('a');
         link.href = url;
         link.hidden = true;
-        document.body.appendChild(link);
+        doc.body.appendChild(link);
         link.click();
-        document.body.removeChild(link);
+        doc.body.removeChild(link);
         new Notice('Opening in OneNote...');
-      } catch (fallbackError: any) {
-        new Notice(`Failed to open OneNote: ${fallbackError.message}`);
+      } catch (fallbackError: unknown) {
+        new Notice(`Failed to open OneNote: ${getErrorMessage(fallbackError)}`);
       }
     }
   }
 
   private async createPageSelector(
-    container: HTMLElement, localService: any,
+    container: HTMLElement, localService: OneNoteLocalService,
     el: HTMLElement, ctx: MarkdownPostProcessorContext, source: string
-  ) {
+  ): Promise<void> {
     const header = container.createDiv({ cls: 'onenote-page-selector-header' });
 
     setIcon(header, 'book-open');
@@ -586,7 +596,7 @@ export class OneNoteCodeBlockRenderer {
     pageSelect.disabled = true;
     pageSelect.createEl('option', { text: 'Select a section first', value: '' });
 
-    let notebooks: any[] = [];
+    let notebooks: LocalOneNoteNotebook[] = [];
 
     // Phase 1: Fast shallow fetch — notebooks + sections only (no pages)
     try {
@@ -600,7 +610,7 @@ export class OneNoteCodeBlockRenderer {
         notebookSelect.value = notebooks[0].id;
         notebookSelect.dispatchEvent(new Event('change'));
       }
-    } catch (error: any) {
+    } catch {
       notebookSelect.empty();
       notebookSelect.createEl('option', { text: 'Error loading notebooks', value: '' });
     }
@@ -619,8 +629,8 @@ export class OneNoteCodeBlockRenderer {
         return;
       }
 
-      const nb = notebooks.find((n: any) => n.id === nbId);
-      const sections = nb?.sections || [];
+      const nb = notebooks.find((notebook) => notebook.id === nbId);
+      const sections: LocalOneNoteSection[] = nb?.sections || [];
 
       if (sections.length === 0) {
         sectionSelect.createEl('option', { text: 'No sections in this notebook', value: '' });
@@ -659,13 +669,13 @@ export class OneNoteCodeBlockRenderer {
         }
 
         pageSelect.createEl('option', { text: 'Select a page...', value: '' });
-        for (const page of pages) {
+        for (const page of pages as LocalOneNotePage[]) {
           pageSelect.createEl('option', { text: page.title, value: page.id });
         }
         pageSelect.disabled = false;
-      } catch (err: any) {
+      } catch (err: unknown) {
         pageSelect.empty();
-        pageSelect.createEl('option', { text: `Error: ${err.message}`, value: '' });
+        pageSelect.createEl('option', { text: `Error: ${getErrorMessage(err)}`, value: '' });
       }
     });
 
@@ -681,39 +691,43 @@ export class OneNoteCodeBlockRenderer {
       text: 'Open in OneNote'
     });
 
-    loadButton.addEventListener('click', async () => {
-      const pageId = pageSelect.value;
-      if (pageId) {
-        loadButton.disabled = true;
-        loadButton.textContent = 'Loading...';
-        try {
-          const pageTitle = pageSelect.options[pageSelect.selectedIndex]?.text || '';
-          await this.replaceCodeBlockContent(pageId, pageTitle, el, ctx, source);
-        } finally {
-          loadButton.disabled = false;
-          loadButton.textContent = 'Load Page';
+    loadButton.addEventListener('click', () => {
+      void (async () => {
+        const pageId = pageSelect.value;
+        if (pageId) {
+          loadButton.disabled = true;
+          loadButton.textContent = 'Loading...';
+          try {
+            const pageTitle = pageSelect.options[pageSelect.selectedIndex]?.text || '';
+            await this.replaceCodeBlockContent(pageId, pageTitle, el, ctx, source);
+          } finally {
+            loadButton.disabled = false;
+            loadButton.textContent = 'Load Page';
+          }
+        } else {
+          new Notice('Please select a page');
         }
-      } else {
-        new Notice('Please select a page');
-      }
+      })();
     });
 
-    openButton.addEventListener('click', async () => {
-      const pageId = pageSelect.value;
-      if (pageId) {
-        try {
-          const ok = await localService.navigateToPage(pageId);
-          if (ok) {
-            new Notice('Opening in OneNote...');
-            return;
+    openButton.addEventListener('click', () => {
+      void (async () => {
+        const pageId = pageSelect.value;
+        if (pageId) {
+          try {
+            const ok = await localService.navigateToPage(pageId);
+            if (ok) {
+              new Notice('Opening in OneNote...');
+              return;
+            }
+          } catch (error: unknown) {
+            console.warn('navigateToPage failed, falling back to protocol URL:', getErrorMessage(error));
           }
-        } catch (e) {
-          console.warn('navigateToPage failed, falling back to protocol URL:', e);
+          this.openInOneNoteLocal(pageId, container.ownerDocument);
+        } else {
+          new Notice('Please select a page');
         }
-        this.openInOneNoteLocal(pageId);
-      } else {
-        new Notice('Please select a page');
-      }
+      })();
     });
   }
 }

@@ -144,7 +144,7 @@ export class WindowEmbedManager {
       });
 
       // Timeout after 10 seconds
-      setTimeout(() => {
+      window.setTimeout(() => {
         if (!settled) {
           settled = true;
           this.stop();
@@ -164,29 +164,29 @@ export class WindowEmbedManager {
     }
 
     return new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const timeout = window.setTimeout(() => {
         this._pendingReparentResolve = null;
         this._pendingReparentReject = null;
         reject(new Error('Reparent timed out after 5s'));
       }, 5000);
 
       this._pendingReparentResolve = () => {
-        clearTimeout(timeout);
+        window.clearTimeout(timeout);
         resolve();
       };
       this._pendingReparentReject = (err: Error) => {
-        clearTimeout(timeout);
+        window.clearTimeout(timeout);
         reject(err);
       };
 
       try {
         const cmd = hostHwnd ? `REPARENT ${hostHwnd}\n` : 'REPARENT\n';
         this._child!.stdin!.write(cmd);
-      } catch (err) {
-        clearTimeout(timeout);
+      } catch (error) {
+        window.clearTimeout(timeout);
         this._pendingReparentResolve = null;
         this._pendingReparentReject = null;
-        reject(err);
+        reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
   }
@@ -222,16 +222,18 @@ export class WindowEmbedManager {
     const child = this._child;
 
     return new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => {
+      const timeout = window.setTimeout(() => {
         console.warn('[WinEmbed] detach timed out, force killing');
-        try { child.kill(); } catch {}
+        try { child.kill(); } catch {
+          // ignore kill failures during timeout cleanup
+        }
         this._child = null;
         this._running = false;
         resolve();
       }, 3000);
 
       child.on('exit', () => {
-        clearTimeout(timeout);
+        window.clearTimeout(timeout);
         this._child = null;
         this._running = false;
         resolve();
@@ -241,16 +243,20 @@ export class WindowEmbedManager {
         // First send DETACH to restore window styles
         child.stdin?.write('DETACH\n');
         // Then send EXIT to terminate the process
-        setTimeout(() => {
+        window.setTimeout(() => {
           try {
             child.stdin?.write('EXIT\n');
             child.stdin?.end();
-          } catch {}
+          } catch {
+            // ignore EXIT write failures during shutdown
+          }
         }, 200);
-      } catch (err) {
-        console.error('[WinEmbed] detach write error:', err);
-        clearTimeout(timeout);
-        try { child.kill(); } catch {}
+      } catch (error) {
+        console.error('[WinEmbed] detach write error:', error);
+        window.clearTimeout(timeout);
+        try { child.kill(); } catch {
+          // ignore kill failures during error cleanup
+        }
         this._child = null;
         this._running = false;
         resolve();
@@ -278,13 +284,17 @@ export class WindowEmbedManager {
       try {
         child.stdin?.write('EXIT\n');
         child.stdin?.end();
-      } catch {}
+      } catch {
+        // ignore EXIT write failures during stop
+      }
       
       // Give it a moment to clean up, then force kill
-      setTimeout(() => {
+      window.setTimeout(() => {
         try { 
           if (!child.killed) child.kill(); 
-        } catch {}
+        } catch {
+          // ignore kill failures during stop
+        }
       }, 500);
       
       this._child = null;

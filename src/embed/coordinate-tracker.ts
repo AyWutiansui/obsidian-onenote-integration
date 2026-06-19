@@ -1,3 +1,8 @@
+interface ScreenWithAvail extends Screen {
+  availLeft?: number;
+  availTop?: number;
+}
+
 /**
  * Calculate the Electron chrome offset (title bar + toolbar height).
  * getBoundingClientRect returns viewport-relative coords; we need screen-absolute.
@@ -7,7 +12,7 @@
  */
 export function calculateChromeOffset(): { x: number; y: number } {
   const dpr = window.devicePixelRatio || 1;
-  const screen = window.screen as any;
+  const screen = window.screen as ScreenWithAvail;
 
   // Obsidian uses a frameless window: outerHeight === innerHeight always.
   // Maximized detection relies on:
@@ -117,13 +122,13 @@ export class CoordinateTracker {
         // Debounce via RAF — coalesce rapid DOM mutations into one update per frame
         if (this._pendingRafUpdate) return;
         this._pendingRafUpdate = true;
-        requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
           this._pendingRafUpdate = false;
           this.update();
         });
       }
     });
-    this._mutationObserver.observe(document.body, {
+    this._mutationObserver.observe(this._container.ownerDocument.body, {
       attributes: true,
       attributeFilter: ['class', 'style'],
       childList: true,
@@ -187,7 +192,7 @@ export class CoordinateTracker {
   private isOccluded(rect: DOMRectReadOnly): boolean {
     // Strategy 1: known overlay elements
     for (const selector of CoordinateTracker.OVERLAY_SELECTORS) {
-      const overlays = document.querySelectorAll(selector);
+      const overlays = this._container.ownerDocument.querySelectorAll(selector);
       for (const el of Array.from(overlays)) {
         const htmlEl = el as HTMLElement;
         // Skip hidden / zero-size elements
@@ -207,11 +212,12 @@ export class CoordinateTracker {
     }
 
     // Strategy 2: elementFromPoint at the centre of the code block
-    if (typeof document.elementFromPoint === 'function') {
+    const activeDocument = this._container.ownerDocument;
+    if (typeof activeDocument.elementFromPoint === 'function') {
       const cx = rect.left + rect.width / 2;
       const cy = rect.top + rect.height / 2;
       if (cx >= 0 && cy >= 0 && cx <= window.innerWidth && cy <= window.innerHeight) {
-        const topEl = document.elementFromPoint(cx, cy);
+        const topEl = activeDocument.elementFromPoint(cx, cy);
         if (topEl && !this._container.contains(topEl)) {
           // Something else is on top of the code block centre
           return true;
@@ -338,7 +344,7 @@ export class CoordinateTracker {
 
     // Check if OneNote window would overflow screen or Obsidian window boundaries
     // Screen boundaries (physical pixels)
-    const screen = window.screen as any;
+    const screen = window.screen as ScreenWithAvail;
     const screenLeft = (screen.availLeft ?? 0) * currentDpr;
     const screenTop = (screen.availTop ?? 0) * currentDpr;
     const screenRight = screenLeft + (window.screen.availWidth || window.innerWidth) * currentDpr;
@@ -376,7 +382,7 @@ export class CoordinateTracker {
     this._disposed = true;
 
     if (this._rafId !== null) {
-      clearTimeout(this._rafId);
+      window.clearTimeout(this._rafId);
       this._rafId = null;
     }
 

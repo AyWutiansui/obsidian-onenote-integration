@@ -1,7 +1,17 @@
-import { ItemView, WorkspaceLeaf, Notice, ButtonComponent, TextComponent, setIcon } from 'obsidian';
+import { ItemView, WorkspaceLeaf, Notice, ButtonComponent, TextComponent, setIcon, MarkdownView } from 'obsidian';
 import { ONE_NOTE_VIEW_TYPE } from './main';
 import OneNoteIntegrationPlugin from './main';
-import { LocalOneNoteNotebook, LocalOneNoteSection, LocalOneNotePage } from './types';
+import { LocalOneNotePage } from './types';
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+type EditorLeafView = MarkdownView & {
+  editor?: {
+    replaceSelection(value: string): void;
+  };
+};
 
 export class OneNoteEmbedView extends ItemView {
   plugin: OneNoteIntegrationPlugin;
@@ -43,8 +53,8 @@ export class OneNoteEmbedView extends ItemView {
       .setIcon('book-open')
       .setTooltip('Load Notebooks')
       .setClass('onenote-icon-btn')
-      .onClick(async () => {
-        await this.loadNotebooks(this.contentDiv!);
+      .onClick(() => {
+        void this.loadNotebooks(this.contentDiv!);
       });
 
     // Add cache refresh button to invalidate the 5-min hierarchy cache
@@ -52,14 +62,16 @@ export class OneNoteEmbedView extends ItemView {
       .setIcon('refresh-cw')
       .setTooltip('Refresh notebook list (clear cache)')
       .setClass('onenote-icon-btn')
-      .onClick(async () => {
+      .onClick(() => {
+        void (async () => {
         const svc = this.plugin.getOneNoteLocalService();
         if (svc) {
           svc.invalidateCache();
           console.log('[OneNote] Hierarchy cache invalidated');
         }
-        this.plugin.updateOneNoteStatus();
+        void this.plugin.updateOneNoteStatus();
         await this.loadNotebooks(this.contentDiv!);
+        })();
       });
 
     const platformInfo = this.plugin.getOneNoteLocalService()?.getPlatformInfo();
@@ -70,12 +82,12 @@ export class OneNoteEmbedView extends ItemView {
 
     // Create search bar
     const searchDiv = container.createDiv({ cls: 'onenote-search-bar' });
-    let searchTimeout: ReturnType<typeof setTimeout> | null = null;
+    let searchTimeout: number | null = null;
     const searchComp = new TextComponent(searchDiv)
       .setPlaceholder('Search notebooks, sections, pages...')
       .onChange((query) => {
-        if (searchTimeout) clearTimeout(searchTimeout);
-        searchTimeout = setTimeout(() => this.performSearch(query, this.contentDiv!), 200);
+        if (searchTimeout) window.clearTimeout(searchTimeout);
+        searchTimeout = window.setTimeout(() => this.performSearch(query, this.contentDiv!), 200);
       });
     this.searchInput = searchComp.inputEl;
 
@@ -200,16 +212,16 @@ export class OneNoteEmbedView extends ItemView {
     const rootIcon = root.createSpan({ cls: 'onenote-breadcrumb-icon' });
     setIcon(rootIcon, 'book-open');
     root.appendText(' Notebooks');
-    this.makeClickable(root, () => {
-      this.clearSearch();
-      this.currentNotebook = null;
-      this.currentNotebookName = '';
-      this.currentSection = null;
-      this.currentSectionName = '';
-      this.currentPage = null;
-      this.currentPageName = '';
-      this.loadNotebooks(this.contentDiv!);
-    }, 'Back to Notebooks');
+      this.makeClickable(root, () => {
+        void this.loadNotebooks(this.contentDiv!);
+        this.clearSearch();
+        this.currentNotebook = null;
+        this.currentNotebookName = '';
+        this.currentSection = null;
+        this.currentSectionName = '';
+        this.currentPage = null;
+        this.currentPageName = '';
+      }, 'Back to Notebooks');
 
     if (this.currentNotebookName) {
       crumb.createSpan({ cls: 'onenote-breadcrumb-sep', text: ' › ' });
@@ -222,7 +234,7 @@ export class OneNoteEmbedView extends ItemView {
           this.currentSectionName = '';
           this.currentPage = null;
           this.currentPageName = '';
-          this.loadSections(this.currentNotebook, this.contentDiv!);
+          void this.loadSections(this.currentNotebook, this.contentDiv!);
         }
       }, `Back to ${this.currentNotebookName}`);
     }
@@ -236,7 +248,7 @@ export class OneNoteEmbedView extends ItemView {
           this.clearSearch();
           this.currentPage = null;
           this.currentPageName = '';
-          this.loadPages(this.currentSection, this.contentDiv!);
+          void this.loadPages(this.currentSection, this.contentDiv!);
         }
       }, `Back to ${this.currentSectionName}`);
     }
@@ -276,7 +288,7 @@ export class OneNoteEmbedView extends ItemView {
     }
 
     // Access cached hierarchy via getNotebooks (returns from cache if fresh)
-    service.getNotebooks().then(notebooks => {
+    void service.getNotebooks().then(notebooks => {
       container.empty();
 
       let resultCount = 0;
@@ -349,10 +361,10 @@ export class OneNoteEmbedView extends ItemView {
           cls: 'onenote-hint-text'
         });
       }
-    }).catch(err => {
+    }).catch((err: unknown) => {
       container.createEl('div', {
         cls: 'onenote-error-message',
-        text: `Search failed: ${err.message}`
+        text: `Search failed: ${getErrorMessage(err)}`
       });
     });
   }
@@ -405,7 +417,7 @@ export class OneNoteEmbedView extends ItemView {
           .setButtonText('Retry Detection')
           .setClass('mod-cta')
           .onClick(() => {
-            this.loadNotebooks(container);
+            void this.loadNotebooks(container);
           });
 
         errorDiv.createEl('p', { text: '' });
@@ -468,7 +480,7 @@ export class OneNoteEmbedView extends ItemView {
           .setButtonText('Retry')
           .setClass('mod-cta')
           .onClick(() => {
-            this.loadNotebooks(container);
+            void this.loadNotebooks(container);
           });
 
         errorDiv.createEl('p', { text: '' });
@@ -494,10 +506,10 @@ export class OneNoteEmbedView extends ItemView {
           await this.loadSections(notebook.id, container);
         }, notebook.sections?.length, 'book');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       container.createEl('div', {
         cls: 'onenote-error-message',
-        text: `Error loading notebooks: ${error.message}`
+        text: `Error loading notebooks: ${getErrorMessage(error)}`
       });
     }
   }
@@ -548,10 +560,10 @@ export class OneNoteEmbedView extends ItemView {
           await this.loadPages(section.id, container);
         }, section.pages?.length, 'folder');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       container.createEl('div', {
         cls: 'onenote-error-message',
-        text: `Error loading sections: ${error.message}`
+        text: `Error loading sections: ${getErrorMessage(error)}`
       });
     }
   }
@@ -615,8 +627,9 @@ export class OneNoteEmbedView extends ItemView {
           const title = page.title || 'Untitled Page';
           const codeBlock = '```onenote\n' + cleanId + '\n' + title + '\n```\n';
           const leaf = this.plugin.app.workspace.getMostRecentLeaf();
-          if (leaf && 'view' in leaf && (leaf.view as any)?.editor) {
-            const editor = (leaf.view as any).editor;
+          const editorView = leaf?.view as EditorLeafView | undefined;
+          if (editorView?.editor) {
+            const editor = editorView.editor;
             editor.replaceSelection(codeBlock);
             new Notice(`Inserted "${title}" into note`);
           } else {
@@ -642,10 +655,10 @@ export class OneNoteEmbedView extends ItemView {
           await this.displayPage(page, container);
         }, `Open ${page.title || 'Untitled Page'}`);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       container.createEl('div', {
         cls: 'onenote-error-message',
-        text: `Error loading pages: ${error.message}`
+        text: `Error loading pages: ${getErrorMessage(error)}`
       });
     }
   }
@@ -666,8 +679,8 @@ export class OneNoteEmbedView extends ItemView {
         .setIcon('external-link')
         .setButtonText('Open in OneNote')
         .setClass('mod-cta')
-        .onClick(async () => {
-          await service?.openPageInOneNote(page.id);
+      .onClick(() => {
+          void service?.openPageInOneNote(page.id);
         });
 
       new ButtonComponent(actions)
@@ -725,18 +738,18 @@ td,th{border-color:#444}
           text: 'Could not retrieve page content. Opening in OneNote application is recommended.'
         });
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       const errDiv = container.createDiv({ cls: 'onenote-error-message' });
       const errIcon = errDiv.createSpan({ cls: 'onenote-item-icon' });
       setIcon(errIcon, 'alert-circle');
-      errDiv.createSpan({ text: `Error loading page content: ${error.message}` });
+      errDiv.createSpan({ text: `Error loading page content: ${getErrorMessage(error)}` });
 
       new ButtonComponent(errDiv)
         .setIcon('refresh-cw')
         .setButtonText('Retry')
         .setClass('mod-cta')
-        .onClick(async () => {
-          await this.displayPage(page, container);
+        .onClick(() => {
+          void this.displayPage(page, container);
         });
     }
   }

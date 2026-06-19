@@ -30,7 +30,7 @@ export default class OneNoteIntegrationPlugin extends Plugin {
     this.statusBarEl = this.addStatusBarItem();
     this.statusBarEl.setText('OneNote: checking...');
     this.statusBarEl.setAttribute('aria-label', 'OneNote connection status');
-    this.updateOneNoteStatus();
+    void this.updateOneNoteStatus();
 
     // Register view type
     this.registerView(
@@ -40,7 +40,7 @@ export default class OneNoteIntegrationPlugin extends Plugin {
 
     // Add ribbon icon
     this.addRibbonIcon('book-open', 'Open OneNote', () => {
-      this.openOneNoteView();
+      void this.openOneNoteView();
     });
 
     // Add command to open OneNote view
@@ -48,7 +48,7 @@ export default class OneNoteIntegrationPlugin extends Plugin {
       id: 'open-onenote-view',
       name: 'Open OneNote view',
       callback: () => {
-        this.openOneNoteView();
+        void this.openOneNoteView();
       }
     });
 
@@ -90,26 +90,31 @@ export default class OneNoteIntegrationPlugin extends Plugin {
 
     // Initialize local OneNote service
     this.localOneNoteService = new OneNoteLocalService();
-    const pluginDir = (this.app.vault.adapter as any).basePath + '/' + this.manifest.dir;
+    const pluginDir = (this.app.vault.adapter as { basePath?: string }).basePath + '/' + this.manifest.dir;
     this.localOneNoteService.setPluginDir(pluginDir);
 
     // Auto-download helper executables if missing (non-blocking)
-    ensureExeFiles(pluginDir, this.manifest.version).then(result => {
+    void ensureExeFiles(pluginDir, this.manifest.version).then(result => {
       if (result === 'downloaded') {
         console.log('[OneNote] Executables downloaded, reloading plugin...');
-        const plugins = (this.app as any).plugins;
-        plugins.disablePlugin(this.manifest.id).then(() => {
-          plugins.enablePlugin(this.manifest.id);
-        });
+        const plugins = (this.app as App & {
+          plugins?: {
+            disablePlugin(id: string): Promise<void>;
+            enablePlugin(id: string): Promise<void>;
+          };
+        }).plugins;
+        if (plugins) {
+          void plugins.disablePlugin(this.manifest.id).then(() => plugins.enablePlugin(this.manifest.id));
+        }
       }
-    }).catch(e => {
-      console.error('[OneNote] exe check failed:', e);
+    }).catch((error: unknown) => {
+      console.error('[OneNote] exe check failed:', error);
     });
 
     // Register code block renderer
     this.registerMarkdownCodeBlockProcessor('onenote', (source, el, ctx) => {
       const renderer = new OneNoteCodeBlockRenderer(this);
-      renderer.renderCodeBlock(source, el, ctx);
+      void renderer.renderCodeBlock(source, el, ctx);
     });
   }
 
@@ -118,12 +123,14 @@ export default class OneNoteIntegrationPlugin extends Plugin {
     // Release embedded OneNote window on plugin unload
     if (this.localOneNoteService) {
       // Try async detach, but force kill if it doesn't complete quickly
-      this.localOneNoteService.detachOneNoteWindow().catch(() => {});
+      void this.localOneNoteService.detachOneNoteWindow().catch(() => undefined);
       // Sync fallback: force stop after 100ms if detach hasn't completed
-      setTimeout(() => {
+      window.setTimeout(() => {
         try {
           this.localOneNoteService?.forceStopEmbedManager();
-        } catch {}
+        } catch {
+          // ignore unload cleanup failures
+        }
       }, 100);
     }
   }
@@ -139,7 +146,7 @@ export default class OneNoteIntegrationPlugin extends Plugin {
     if (!this.localOneNoteService) {
       this.localOneNoteService = new OneNoteLocalService();
       this.localOneNoteService.setPluginDir(
-        (this.app.vault.adapter as any).basePath + '/' + this.manifest.dir
+        (this.app.vault.adapter as { basePath?: string }).basePath + '/' + this.manifest.dir
       );
     }
   }
@@ -244,7 +251,6 @@ class OneNoteSettingTab extends PluginSettingTab {
       .addSlider(slider => slider
         .setLimits(0.3, 2.0, 0.01)
         .setValue(this.plugin.settings.embedAspectRatio)
-        .setDynamicTooltip()
         .onChange(async (value) => {
           this.plugin.settings.embedAspectRatio = value;
           await this.plugin.saveSettings();

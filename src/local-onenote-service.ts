@@ -1,16 +1,33 @@
 import { Notice, Platform } from 'obsidian';
+import { exec, execFile, execSync, type ExecFileException } from 'child_process';
+import * as fs from 'fs';
 import { LocalOneNotePage, LocalOneNoteSection, LocalOneNoteNotebook } from './types';
 import { EmbedSessionManager } from './services/embed-session';
 import { WindowEmbedManager } from './embed/window-embed-manager';
 import {
   parseOneNoteHierarchy,
-  extractSectionsForNotebook,
-  extractPagesForSection,
   parseOneNoteSections,
   parseOneNotePages,
   parseOneNotePageXml,
-  fallbackTextExtract
 } from './services/onenote-xml-parser';
+
+type ExecError = Error & { code?: number | string | null };
+type ElectronWindow = {
+  getNativeWindowHandle(): Buffer;
+};
+
+interface ScreenWithAvail extends Screen {
+  availLeft?: number;
+  availTop?: number;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(getErrorMessage(error));
+}
 
 // Re-export types so existing importers (e.g. onenote-view.ts) still work
 // when they import from this module.
@@ -87,8 +104,6 @@ export class OneNoteLocalService {
   async navigateToPage(pageId: string): Promise<boolean> {
     return new Promise((resolve) => {
       try {
-        const { exec } = require('child_process');
-
         // PowerShell script: GetHyperlinkToObject → Start-Process
         const safeId = OneNoteLocalService.sanitizeForPs(pageId);
         const psScript =
@@ -108,7 +123,7 @@ export class OneNoteLocalService {
         exec(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
           encoding: 'utf-8',
           timeout: 10000
-        }, (error: any, stdout: string, stderr: string) => {
+        }, (error: ExecError | null) => {
           if (error) {
             console.error('[OneNote] PowerShell navigate failed:', error.message);
             resolve(false);
@@ -116,8 +131,8 @@ export class OneNoteLocalService {
           }
           resolve(true);
         });
-      } catch (e: any) {
-        console.error('[OneNote] navigateToPage exception:', e.message);
+      } catch (error: unknown) {
+        console.error('[OneNote] navigateToPage exception:', getErrorMessage(error));
         resolve(false);
       }
     });
@@ -135,8 +150,6 @@ export class OneNoteLocalService {
     // Lazy fetch via PowerShell
     return new Promise((resolve) => {
       try {
-        const { exec } = require('child_process');
-
         const safeId = OneNoteLocalService.sanitizeForPs(pageId);
         const psScript =
           'try {' +
@@ -154,7 +167,7 @@ export class OneNoteLocalService {
         exec(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
           encoding: 'utf-8',
           timeout: 10000
-        }, (error: any, stdout: string, stderr: string) => {
+        }, (error: ExecError | null, stdout: string) => {
           if (error || !stdout.trim()) {
             resolve('');
             return;
@@ -182,8 +195,8 @@ export class OneNoteLocalService {
         return await this.checkMacOneNote();
       }
       return false;
-    } catch (error: any) {
-      console.error('OneNote availability check failed:', error);
+    } catch (error: unknown) {
+      console.error('OneNote availability check failed:', getErrorMessage(error));
       return false;
     }
   }
@@ -191,8 +204,6 @@ export class OneNoteLocalService {
   private async checkWindowsOneNote(): Promise<boolean> {
     return new Promise((resolve) => {
       try {
-        const { execSync } = require('child_process');
-
         // Method 1: Try to find OneNote executable in common locations
         const commonPaths = [
           'C:\\Program Files\\Microsoft Office\\root\\Office16\\ONENOTE.EXE',
@@ -209,7 +220,7 @@ export class OneNoteLocalService {
             execSync(`if exist "${path}" echo found`, { encoding: 'utf-8' });
             found = true;
             break;
-          } catch (e) {
+          } catch {
             // Continue to next path
           }
         }
@@ -230,7 +241,7 @@ export class OneNoteLocalService {
             resolve(true);
             return;
           }
-        } catch (e: any) {
+        } catch {
           // Registry check failed
         }
         
@@ -241,13 +252,13 @@ export class OneNoteLocalService {
             resolve(true);
             return;
           }
-        } catch (e: any) {
+        } catch {
           // PATH check failed
         }
         
         resolve(false);
-      } catch (error: any) {
-        console.error('Error checking Windows OneNote:', error);
+      } catch (error: unknown) {
+        console.error('Error checking Windows OneNote:', getErrorMessage(error));
         resolve(false);
       }
     });
@@ -256,11 +267,10 @@ export class OneNoteLocalService {
   private async checkMacOneNote(): Promise<boolean> {
     return new Promise((resolve) => {
       try {
-        const { execSync } = require('child_process');
         const result = execSync('mdfind "kMDItemCFBundleIdentifier == \'com.microsoft.onenote\'"', { encoding: 'utf-8' });
         // Check if mdfind found any results (non-empty output)
-        resolve(result && result.trim().length > 0);
-      } catch (error) {
+        resolve(result.trim().length > 0);
+      } catch {
         resolve(false);
       }
     });
@@ -277,9 +287,9 @@ export class OneNoteLocalService {
         return await this.getMacNotebooks();
       }
       return [];
-    } catch (error: any) {
-      console.error('Failed to get notebooks:', error);
-      throw new Error(`Failed to get notebooks: ${error.message}`);
+    } catch (error: unknown) {
+      console.error('Failed to get notebooks:', getErrorMessage(error));
+      throw new Error(`Failed to get notebooks: ${getErrorMessage(error)}`);
     }
   }
 
@@ -293,8 +303,6 @@ export class OneNoteLocalService {
 
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         // Use hierarchy level 4 (hsPages recursive) to get complete hierarchy.
         // Level 4 is the only level that returns the full tree with notebooks,
         // sections, and pages on this OneNote version. Lower levels (1, 2) return
@@ -320,7 +328,7 @@ export class OneNoteLocalService {
         exec(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
           encoding: 'utf-8',
           maxBuffer: 10 * 1024 * 1024
-        }, (error: any, stdout: string, stderr: string) => {
+        }, (error: ExecFileException | null, stdout: string, stderr: string) => {
           if (error) {
             console.error('PowerShell error:', error);
             console.error('stderr:', stderr);
@@ -344,14 +352,14 @@ export class OneNoteLocalService {
             this.hierarchyCache = notebooks;
             this._cacheTimestamp = Date.now();
             resolve(notebooks);
-          } catch (parseError: any) {
-            console.error('Parse error:', parseError);
-            reject(parseError);
+          } catch (parseError: unknown) {
+            console.error('Parse error:', getErrorMessage(parseError));
+            reject(toError(parseError));
           }
         });
-      } catch (error: any) {
-        console.error('getWindowsNotebooks error:', error);
-        reject(error);
+      } catch (error: unknown) {
+        console.error('getWindowsNotebooks error:', getErrorMessage(error));
+        reject(toError(error));
       }
     });
   }
@@ -359,8 +367,6 @@ export class OneNoteLocalService {
   private async getMacNotebooks(): Promise<LocalOneNoteNotebook[]> {
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         // Use AppleScript to interact with OneNote
         const script = `
           tell application "Microsoft OneNote"
@@ -372,7 +378,7 @@ export class OneNoteLocalService {
           end tell
         `;
 
-        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: any, stdout: string, stderr: string) => {
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: ExecError | null, stdout: string, stderr: string) => {
           if (error) {
             reject(new Error(stderr || error.message));
             return;
@@ -388,8 +394,8 @@ export class OneNoteLocalService {
 
           resolve(notebooks);
         });
-      } catch (error: any) {
-        reject(error);
+      } catch (error: unknown) {
+        reject(toError(error));
       }
     });
   }
@@ -405,9 +411,9 @@ export class OneNoteLocalService {
         return await this.getMacSections(notebookId);
       }
       return [];
-    } catch (error: any) {
-      console.error('Failed to get sections:', error);
-      throw new Error(`Failed to get sections: ${error.message}`);
+    } catch (error: unknown) {
+      console.error('Failed to get sections:', getErrorMessage(error));
+      throw new Error(`Failed to get sections: ${getErrorMessage(error)}`);
     }
   }
 
@@ -423,8 +429,6 @@ export class OneNoteLocalService {
     // Fallback: fetch from OneNote if cache is not available
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         // Use Base64 encoding to avoid escaping issues with notebook IDs containing special characters
         const safeId = OneNoteLocalService.sanitizeForPs(notebookId);
         const psScript =
@@ -444,7 +448,7 @@ export class OneNoteLocalService {
         exec(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
           encoding: 'utf-8',
           maxBuffer: 10 * 1024 * 1024
-        }, (error: any, stdout: string, stderr: string) => {
+        }, (error: ExecError | null, stdout: string, stderr: string) => {
           if (error) {
             console.error('PowerShell sections error:', error);
             console.error('stderr:', stderr);
@@ -460,14 +464,14 @@ export class OneNoteLocalService {
           try {
             const sections = parseOneNoteSections(stdout);
             resolve(sections);
-          } catch (parseError: any) {
-            console.error('Parse sections error:', parseError);
-            reject(parseError);
+          } catch (parseError: unknown) {
+            console.error('Parse sections error:', getErrorMessage(parseError));
+            reject(toError(parseError));
           }
         });
-      } catch (error: any) {
-        console.error('getWindowsSections error:', error);
-        reject(error);
+      } catch (error: unknown) {
+        console.error('getWindowsSections error:', getErrorMessage(error));
+        reject(toError(error));
       }
     });
   }
@@ -475,8 +479,6 @@ export class OneNoteLocalService {
   private async getMacSections(notebookId: string): Promise<LocalOneNoteSection[]> {
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         const script = `
           tell application "Microsoft OneNote"
             set nb to notebook "${notebookId}"
@@ -488,7 +490,7 @@ export class OneNoteLocalService {
           end tell
         `;
 
-        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: any, stdout: string, stderr: string) => {
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: ExecError | null, stdout: string, stderr: string) => {
           if (error) {
             reject(new Error(stderr || error.message));
             return;
@@ -505,8 +507,8 @@ export class OneNoteLocalService {
 
           resolve(sections);
         });
-      } catch (error: any) {
-        reject(error);
+      } catch (error: unknown) {
+        reject(toError(error));
       }
     });
   }
@@ -522,9 +524,9 @@ export class OneNoteLocalService {
         return await this.getMacPages(sectionId);
       }
       return [];
-    } catch (error: any) {
-      console.error('Failed to get pages:', error);
-      throw new Error(`Failed to get pages: ${error.message}`);
+    } catch (error: unknown) {
+      console.error('Failed to get pages:', getErrorMessage(error));
+      throw new Error(`Failed to get pages: ${getErrorMessage(error)}`);
     }
   }
 
@@ -558,8 +560,6 @@ export class OneNoteLocalService {
   private async _fetchPagesForSection(sectionId: string): Promise<LocalOneNotePage[]> {
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         // Use hierarchy level 2 (hsPages) with sectionId to get only the target section's pages
         const safeSectionId = OneNoteLocalService.sanitizeForPs(sectionId);
         const psScript =
@@ -579,7 +579,7 @@ export class OneNoteLocalService {
         exec(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
           encoding: 'utf-8',
           maxBuffer: 10 * 1024 * 1024
-        }, (error: any, stdout: string, stderr: string) => {
+        }, (error: ExecError | null, stdout: string, stderr: string) => {
           if (error) {
             console.error('PowerShell pages error:', error);
             console.error('stderr:', stderr);
@@ -610,14 +610,14 @@ export class OneNoteLocalService {
             }
 
             resolve(pages);
-          } catch (parseError: any) {
-            console.error('Parse pages error:', parseError);
-            reject(parseError);
+          } catch (parseError: unknown) {
+            console.error('Parse pages error:', getErrorMessage(parseError));
+            reject(toError(parseError));
           }
         });
-      } catch (error: any) {
-        console.error('getWindowsPages error:', error);
-        reject(error);
+      } catch (error: unknown) {
+        console.error('getWindowsPages error:', getErrorMessage(error));
+        reject(toError(error));
       }
     });
   }
@@ -625,8 +625,6 @@ export class OneNoteLocalService {
   private async getMacPages(sectionId: string): Promise<LocalOneNotePage[]> {
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         const script = `
           tell application "Microsoft OneNote"
             set s to section "${sectionId}"
@@ -638,7 +636,7 @@ export class OneNoteLocalService {
           end tell
         `;
 
-        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: any, stdout: string, stderr: string) => {
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8' }, (error: ExecError | null, stdout: string, stderr: string) => {
           if (error) {
             reject(new Error(stderr || error.message));
             return;
@@ -655,8 +653,8 @@ export class OneNoteLocalService {
 
           resolve(pages);
         });
-      } catch (error: any) {
-        reject(error);
+      } catch (error: unknown) {
+        reject(toError(error));
       }
     });
   }
@@ -672,9 +670,9 @@ export class OneNoteLocalService {
         return await this.getMacPageContent(pageId);
       }
       return '';
-    } catch (error: any) {
-      console.error('Failed to get page content:', error);
-      throw new Error(`Failed to get page content: ${error.message}`);
+    } catch (error: unknown) {
+      console.error('Failed to get page content:', getErrorMessage(error));
+      throw new Error(`Failed to get page content: ${getErrorMessage(error)}`);
     }
   }
 
@@ -696,7 +694,6 @@ export class OneNoteLocalService {
 
   /** Check whether both helper executables exist. */
   hasExeFiles(): boolean {
-    const fs = require('fs');
     return fs.existsSync(this._pluginDir + '/onenote-repos.exe')
       && fs.existsSync(this._pluginDir + '/win-embed-overlay.exe');
   }
@@ -706,12 +703,11 @@ export class OneNoteLocalService {
     return new Promise((resolve, reject) => {
       const exePath = this.getExePath();
       try {
-        const { execFile } = require('child_process');
         execFile(exePath, args, {
           encoding: 'utf-8',
           maxBuffer: 1024 * 1024,
           windowsHide: true
-        }, (error: any, stdout: string, stderr: string) => {
+        }, (error: ExecError | null, stdout: string, stderr: string) => {
           const output = (stdout || '').trim();
           if (stderr) console.error('[OneNote C++] stderr:', stderr.trim());
           if (error) {
@@ -725,9 +721,9 @@ export class OneNoteLocalService {
             resolve(output);
           }
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('[OneNote C++] spawn error:', error);
-        reject(error);
+        reject(error instanceof Error ? error : new Error(getErrorMessage(error)));
       }
     });
   }
@@ -749,15 +745,15 @@ export class OneNoteLocalService {
         if (output.startsWith('OK:')) {
           return output.substring(3);
         }
-      } catch (e: any) {
-        lastError = e;
+      } catch (error: unknown) {
+        lastError = error instanceof Error ? error : new Error(getErrorMessage(error));
       }
       if (attempt < maxRetries) {
         const delayMs = attempt <= fastAttempts ? 200 : 500;
         if (attempt % 5 === 0) {
           console.log(`[OneNote Embed] show-window: ${attempt} attempts so far...`);
         }
-        await new Promise(r => setTimeout(r, delayMs));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
       }
     }
     throw lastError ?? new Error('OneNote window not found after ' + maxRetries + ' attempts');
@@ -769,10 +765,7 @@ export class OneNoteLocalService {
    */
   getObsidianWindowHwnd(): string | null {
     // Try multiple strategies to get the Obsidian window handle
-    const strategies = [
-      () => require('electron').remote?.getCurrentWindow?.(),
-      () => require('@electron/remote')?.getCurrentWindow?.(),
-    ];
+    const strategies: Array<() => ElectronWindow | null | undefined> = [];
 
     for (const getWin of strategies) {
       try {
@@ -820,7 +813,7 @@ export class OneNoteLocalService {
       if (navigated) break;
       if (i < maxNavRetries) {
         console.log(`[OneNote Embed] Navigate attempt ${i} failed, retrying in 1s...`);
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
       }
     }
     if (!navigated) {
@@ -830,7 +823,7 @@ export class OneNoteLocalService {
     if (!skipStabilization) {
       // Brief pause for OneNote to finish navigating and create its CFrame window.
       // Skipped for reattach — findOneNoteWindowHwnd polling handles the wait.
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
     }
 
     // Step 2: Find the OneNote window HWND
@@ -841,7 +834,7 @@ export class OneNoteLocalService {
       // During cold start, OneNote may still be loading the page or repositioning
       // its window. We check again to confirm the window is stable before embedding.
       for (let stabAttempt = 0; stabAttempt < 3; stabAttempt++) {
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 500));
         try {
           const verifyOutput = await this.runExe(['show-window']);
           if (verifyOutput.startsWith('OK:')) {
@@ -874,8 +867,8 @@ export class OneNoteLocalService {
     if (!this._embedManager?.isRunning()) return;
     try {
       await this._embedManager.reparent(hostHwnd);
-    } catch (e: any) {
-      console.warn('[OneNote Embed] REPARENT failed:', e.message);
+    } catch (error: unknown) {
+      console.warn('[OneNote Embed] REPARENT failed:', getErrorMessage(error));
     }
   }
 
@@ -924,16 +917,14 @@ export class OneNoteLocalService {
     this.stopEmbedProcess();
     try {
       await this.runExe(['quit']);
-    } catch (e: any) {
-      console.warn('[OneNote Embed] Quit error:', e.message);
+    } catch (error: unknown) {
+      console.warn('[OneNote Embed] Quit error:', getErrorMessage(error));
     }
   }
 
   private async getWindowsPageContent(pageId: string): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         // PowerShell: get URL + XML content
         const safeId = OneNoteLocalService.sanitizeForPs(pageId);
         const psScript =
@@ -952,7 +943,7 @@ export class OneNoteLocalService {
         exec(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encodedScript}`, {
           encoding: 'utf-8',
           maxBuffer: 10 * 1024 * 1024
-        }, (error: any, stdout: string, stderr: string) => {
+        }, (error: ExecError | null, stdout: string, stderr: string) => {
           if (error) {
             console.error('PowerShell error:', error);
             console.error('stderr:', stderr);
@@ -985,9 +976,9 @@ export class OneNoteLocalService {
           const html = parseOneNotePageXml(xmlContent);
           resolve(html);
         });
-      } catch (error: any) {
-        console.error('getWindowsPageContent error:', error);
-        reject(error);
+      } catch (error: unknown) {
+        console.error('getWindowsPageContent error:', getErrorMessage(error));
+        reject(toError(error));
       }
     });
   }
@@ -995,8 +986,6 @@ export class OneNoteLocalService {
   private async getMacPageContent(pageId: string): Promise<string> {
     return new Promise((resolve, reject) => {
       try {
-        const { exec } = require('child_process');
-
         const script = `
           tell application "Microsoft OneNote"
             set p to page "${pageId}"
@@ -1004,15 +993,15 @@ export class OneNoteLocalService {
           end tell
         `;
 
-        exec(`osascript -e '${script}'`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }, (error: any, stdout: string, stderr: string) => {
+        exec(`osascript -e '${script}'`, { encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 }, (error: ExecError | null, stdout: string, stderr: string) => {
           if (error) {
             reject(new Error(stderr || error.message));
             return;
           }
           resolve(stdout);
         });
-      } catch (error: any) {
-        reject(error);
+      } catch (error: unknown) {
+        reject(toError(error));
       }
     });
   }
@@ -1023,20 +1012,18 @@ export class OneNoteLocalService {
   async openPageInOneNote(pageId: string): Promise<boolean> {
     try {
       if (this.isWindows) {
-        const { execFile } = require('child_process');
         execFile('cmd.exe', ['/c', 'start', '', `onenote:${pageId}`], {
           windowsHide: true
         });
         return true;
       } else if (this.isMac) {
-        const { exec } = require('child_process');
         exec(`open -a "Microsoft OneNote" "onenote:${pageId}"`);
         return true;
       }
       return false;
-    } catch (error: any) {
-      console.error('Failed to open page in OneNote:', error);
-      new Notice(`Failed to open OneNote: ${error.message}`);
+    } catch (error: unknown) {
+      console.error('Failed to open page in OneNote:', getErrorMessage(error));
+      new Notice(`Failed to open OneNote: ${getErrorMessage(error)}`);
       return false;
     }
   }
@@ -1044,20 +1031,18 @@ export class OneNoteLocalService {
   async openOneNoteApp(): Promise<boolean> {
     try {
       if (this.isWindows) {
-        const { execFile } = require('child_process');
         execFile('cmd.exe', ['/c', 'start', '', 'onenote:'], {
           windowsHide: true
         });
         return true;
       } else if (this.isMac) {
-        const { exec } = require('child_process');
         exec('open -a "Microsoft OneNote"');
         return true;
       }
       return false;
-    } catch (error: any) {
-      console.error('Failed to open OneNote app:', error);
-      new Notice(`Failed to open OneNote: ${error.message}`);
+    } catch (error: unknown) {
+      console.error('Failed to open OneNote app:', getErrorMessage(error));
+      new Notice(`Failed to open OneNote: ${getErrorMessage(error)}`);
       return false;
     }
   }

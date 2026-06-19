@@ -35,16 +35,17 @@ export async function ensureExeFiles(
       });
       console.log(`[OneNote] Downloaded ${file}`);
       downloaded++;
-    } catch (e: any) {
-      console.error(`[OneNote] Failed to download ${file}:`, e.message);
-      notice.setMessage(`OneNote: failed to download ${file} — ${e.message}`);
-      setTimeout(() => notice.hide(), 5000);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[OneNote] Failed to download ${file}:`, message);
+      notice.setMessage(`OneNote: failed to download ${file} — ${message}`);
+      window.setTimeout(() => notice.hide(), 5000);
       return false;
     }
   }
 
   notice.setMessage('OneNote: helper executables ready — reloading plugin...');
-  setTimeout(() => notice.hide(), 5000);
+  window.setTimeout(() => notice.hide(), 5000);
   return 'downloaded';
 }
 
@@ -59,11 +60,11 @@ function downloadFile(
     const done = (fn: () => void) => {
       if (settled) return;
       settled = true;
-      clearTimeout(totalTimer);
+      window.clearTimeout(totalTimer);
       fn();
     };
 
-    const totalTimer = setTimeout(() => {
+    const totalTimer = window.setTimeout(() => {
       done(() => reject(new Error(`Download timed out (${Math.round(totalTimeoutMs / 1000)}s)`)));
     }, totalTimeoutMs);
 

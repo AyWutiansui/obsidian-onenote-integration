@@ -263,8 +263,8 @@ export function parseOneNotePageXml(xml: string): string {
     }
 
     return result || '<p><em>Empty page</em></p>';
-  } catch (e: any) {
-    console.error('Error parsing OneNote page XML:', e);
+  } catch (error: unknown) {
+    console.error('Error parsing OneNote page XML:', error);
     return fallbackTextExtract(xml);
   }
 }
@@ -328,7 +328,7 @@ export function parseOneNoteHierarchy(xml: string): LocalOneNoteNotebook[] {
         });
       }
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to parse hierarchy XML:', error);
   }
 
@@ -344,7 +344,7 @@ export function extractSectionsForNotebook(xml: string, notebookId: string): Loc
   try {
     // Find the notebook section in the XML by ID
     // We need to find content between this notebook's opening tag and its closing tag
-    const notebookPattern = new RegExp(`<one:Notebook[^>]*ID="${notebookId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>([\\s\\S]*?)<\/one:Notebook>`, 'gi');
+    const notebookPattern = new RegExp(`<one:Notebook[^>]*ID="${notebookId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>([\\s\\S]*?)</one:Notebook>`, 'gi');
     const notebookMatch = notebookPattern.exec(xml);
 
     if (!notebookMatch) {
@@ -391,7 +391,7 @@ export function extractSectionsForNotebook(xml: string, notebookId: string): Loc
       }
     }
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(`Error extracting sections for notebook ${notebookId}:`, error);
   }
 
@@ -406,7 +406,7 @@ export function extractPagesForSection(notebookContent: string, sectionId: strin
 
   try {
     // Find the section content in the XML
-    const sectionPattern = new RegExp(`<one:Section[^>]*ID="${sectionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>([\\s\\S]*?)<\/one:Section>`, 'gi');
+    const sectionPattern = new RegExp(`<one:Section[^>]*ID="${sectionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>([\\s\\S]*?)</one:Section>`, 'gi');
     const sectionMatch = sectionPattern.exec(notebookContent);
 
     if (!sectionMatch) {
@@ -459,7 +459,7 @@ export function extractPagesForSection(notebookContent: string, sectionId: strin
       }
     }
 
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(`Error extracting pages for section ${sectionId}:`, error);
   }
 
@@ -502,7 +502,7 @@ export function parseOneNoteSections(xml: string): LocalOneNoteSection[] {
         sections.push({ id, name, notebookId: '' });
       }
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to parse sections XML:', error);
   }
 
@@ -570,7 +570,7 @@ export function parseOneNotePages(xml: string): LocalOneNotePage[] {
         });
       }
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to parse pages XML:', error);
   }
 
