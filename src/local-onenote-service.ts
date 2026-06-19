@@ -694,6 +694,13 @@ export class OneNoteLocalService {
     return this._pluginDir + '/onenote-repos.exe';
   }
 
+  /** Check whether both helper executables exist. */
+  hasExeFiles(): boolean {
+    const fs = require('fs');
+    return fs.existsSync(this._pluginDir + '/onenote-repos.exe')
+      && fs.existsSync(this._pluginDir + '/win-embed-overlay.exe');
+  }
+
   /** Helper: run the C++ binary with the given subcommand and return stdout. */
   private runExe(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {

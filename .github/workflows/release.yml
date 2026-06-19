@@ -1,58 +1,92 @@
-name: Release Obsidian plugin
+name: Build and Release Obsidian Plugin
 
 on:
   push:
     tags:
-      - "*"
+      - '*'
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
 
-      - name: Use Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "18.x"
+          node-version: 20
+          cache: npm
 
       - name: Install MinGW-w64 cross-compiler
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
 
-      - name: Install Node dependencies
+      - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Build TypeScript plugin
+      - name: Validate release tag matches plugin version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest_version="$(node -p "require('./manifest.json').version")"
+          package_version="$(node -p "require('./package.json').version")"
+
+          if [ "$tag" != "$manifest_version" ]; then
+            echo "Tag version '$tag' does not match manifest.json version '$manifest_version'"
+            exit 1
+          fi
+
+          if [ "$package_version" != "$manifest_version" ]; then
+            echo "package.json version '$package_version' does not match manifest.json version '$manifest_version'"
+            exit 1
+          fi
+
+      - name: Validate versions.json includes current release
+        shell: bash
+        run: |
+          version="$(node -p "require('./manifest.json').version")"
+          min_app_version="$(node -p "require('./manifest.json').minAppVersion")"
+          mapped_min_app_version="$(node -p "const versions=require('./versions.json'); versions['$version'] || ''")"
+
+          if [ "$mapped_min_app_version" != "$min_app_version" ]; then
+            echo "versions.json entry for '$version' must equal '$min_app_version'"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build plugin
         run: npm run build
 
-      - name: Cross-compile C helpers for Windows
+      - name: Cross-compile Windows helper binaries
+        shell: bash
         run: |
           CC=x86_64-w64-mingw32-gcc
 
-          $CC -O2 -static \
+          "$CC" -O2 -static \
             repos.c \
             -luser32 -lole32 -loleaut32 -ldwmapi -lpsapi -lshell32 -lshcore -luuid \
             -o onenote-repos.exe
 
-          $CC -O2 -static \
+          "$CC" -O2 -static \
             win-embed-overlay.c \
             -luser32 -lpsapi -ldwmapi -lshcore \
             -o win-embed-overlay.exe
 
-          ls -lh *.exe
-
-      - name: Create release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          tag="${GITHUB_REF#refs/tags/}"
-
-          gh release create "$tag" \
-            --title="$tag" \
-            --draft \
-            main.js manifest.json styles.css versions.json \
-            onenote-repos.exe win-embed-overlay.exe
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            main.js
+            manifest.json
+            styles.css
+            versions.json
+            onenote-repos.exe
+            win-embed-overlay.exe

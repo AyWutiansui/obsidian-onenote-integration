@@ -13,6 +13,8 @@ const buildOptions = {
     'electron',
     '@electron/remote',
     'child_process',
+    'fs',
+    'https',
     '@codemirror/autocomplete',
     '@codemirror/closebrackets',
     '@codemirror/commands',

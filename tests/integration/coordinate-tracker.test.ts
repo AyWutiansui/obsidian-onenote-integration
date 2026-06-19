@@ -136,8 +136,8 @@ describe('CoordinateTracker', () => {
     expect(callback).toHaveBeenCalledTimes(1);
     // x = rect.left + offset.x = 100 + 0 = 100
     // y = rect.top + offset.y = 200 + (800-700) = 300
-    // w = 400, h = max(400, min(1200, round(400*2/3))) = max(400,267) = 400
-    expect(callback).toHaveBeenCalledWith(100, 300, 400, 400);
+    // w = 400, h = rendered container height = 300
+    expect(callback).toHaveBeenCalledWith(100, 300, 400, 300);
 
     tracker.dispose();
   });
@@ -231,7 +231,7 @@ describe('CoordinateTracker', () => {
 
     const tracker = new CoordinateTracker(container, callback);
 
-    expect(callback).toHaveBeenCalledWith(101, 300, 401, 400);
+    expect(callback).toHaveBeenCalledWith(101, 300, 401, 300);
 
     tracker.dispose();
   });
@@ -248,12 +248,12 @@ describe('CoordinateTracker', () => {
     const tracker = new CoordinateTracker(container, callback);
 
     // rect: left=100, top=200, width=400 → physical: 150, 300, 600
-    // embedHeightCss = max(400, min(1200, round(400*2/3))) = max(400, 267) = 400
-    // embedHeight = round(400 * 1.5) = 600
+    // embedHeightCss = rendered container height = 300
+    // embedHeight = round(300 * 1.5) = 450
     // offset.y = round((screenY + chromeH) * dpr) = round((0 + 100) * 1.5) = 150
     // y = physTop + offset.y = 300 + 150 = 450
-    // screen bottom = 0 + 700*1.5 = 1050, oneNoteBottom = 450+600 = 1050 ≤ 1050 ✓
-    expect(callback).toHaveBeenCalledWith(150, 450, 600, 600);
+    // screen bottom = 0 + 700*1.5 = 1050, oneNoteBottom = 450+450 = 900 ≤ 1050 ✓
+    expect(callback).toHaveBeenCalledWith(150, 450, 600, 450);
 
     tracker.dispose();
   });
@@ -269,12 +269,12 @@ describe('CoordinateTracker', () => {
     const tracker = new CoordinateTracker(container, callback);
 
     // rect: left=100, top=200, width=400 → physical: 200, 400, 800
-    // embedHeightCss = max(400, min(1200, round(400*2/3))) = max(400, 267) = 400
-    // embedHeight = round(400 * 2) = 800
+    // embedHeightCss = rendered container height = 300
+    // embedHeight = round(300 * 2) = 600
     // offset.y = round((screenY + chromeH) * dpr) = round((0 + 100) * 2) = 200
     // y = physTop + offset.y = 400 + 200 = 600
-    // screen bottom = 0 + 700*2 = 1400, oneNoteBottom = 600+800 = 1400 ≤ 1400 ✓
-    expect(callback).toHaveBeenCalledWith(200, 600, 800, 800);
+    // screen bottom = 0 + 700*2 = 1400, oneNoteBottom = 600+600 = 1200 ≤ 1400 ✓
+    expect(callback).toHaveBeenCalledWith(200, 600, 800, 600);
 
     tracker.dispose();
   });
@@ -289,7 +289,7 @@ describe('CoordinateTracker', () => {
 
     const tracker = new CoordinateTracker(container, callback);
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(callback).toHaveBeenCalledWith(100, 300, 400, 400);
+    expect(callback).toHaveBeenCalledWith(100, 300, 400, 300);
 
     // Simulate DPR change (window moved to different monitor)
     Object.defineProperty(window, 'devicePixelRatio', { value: 2, writable: true, configurable: true });
@@ -297,7 +297,7 @@ describe('CoordinateTracker', () => {
 
     // Should fire again with new physical pixel values (including offset recalculation)
     expect(callback).toHaveBeenCalledTimes(2);
-    expect(callback).toHaveBeenLastCalledWith(200, 600, 800, 800);
+    expect(callback).toHaveBeenLastCalledWith(200, 600, 800, 600);
 
     tracker.dispose();
   });

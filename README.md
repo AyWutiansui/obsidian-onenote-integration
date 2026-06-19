@@ -24,15 +24,17 @@ Embed and edit OneNote notes directly inside Obsidian through a local COM interf
 
 ## Installation
 
-### From Obsidian Community Plugins (once published)
+### From Obsidian Community Plugins
 
 Search for **OneNote Integration** in the Community Plugins browser inside Obsidian and click Install.
 
 ### Manual installation
 
-1. Build the plugin (see [Development](#development) below)
-2. Copy `main.js`, `manifest.json`, `styles.css`, `onenote-repos.exe`, and `win-embed-overlay.exe` into `<vault>/.obsidian/plugins/obsidian-onenote-integration/`
+1. Build the plugin (see [Development](#development) below), or download `main.js`, `manifest.json`, and `styles.css` from the [latest release](../../releases)
+2. Copy them into `<vault>/.obsidian/plugins/obsidian-onenote-integration/`
 3. Enable **OneNote Integration** in Obsidian → Settings → Community plugins
+
+> **Note:** On first launch the plugin automatically downloads the two helper executables (`onenote-repos.exe`, `win-embed-overlay.exe`) from the GitHub release. No manual compilation is required.
 
 ## Usage
 
@@ -114,7 +116,7 @@ Both are compiled as standalone single-file executables with no external runtime
 ### Prerequisites
 
 - Node.js v16+
-- Visual Studio Build Tools (for compiling C helpers — requires `vcvarsall x64`)
+- MinGW-w64 (for compiling C helpers locally) or MSVC Build Tools
 
 ### Build
 
@@ -125,24 +127,55 @@ npm run dev            # Watch mode for development
 npm test               # Run tests (vitest)
 ```
 
-### Compile C helpers
+### Compile C helpers (optional)
 
-Open a VS Build Tools command prompt and run:
+C helpers are cross-compiled by the CI workflow (MinGW-w64 on Ubuntu). To compile locally:
 
-```cmd
-compile-repos.bat
-```
-
-Or manually:
-
-```cmd
-cl /O2 /EHsc repos.c user32.lib ole32.lib oleaut32.lib dwmapi.lib psapi.lib shell32.lib shcore.lib /Fe:onenote-repos.exe
-cl /O2 /EHsc win-embed-overlay.c user32.lib psapi.lib dwmapi.lib shcore.lib /Fe:win-embed-overlay.exe
+```bash
+# MinGW-w64
+x86_64-w64-mingw32-gcc -O2 -static repos.c \
+  -luser32 -lole32 -loleaut32 -ldwmapi -lpsapi -lshell32 -lshcore -luuid \
+  -o onenote-repos.exe
+x86_64-w64-mingw32-gcc -O2 -static win-embed-overlay.c \
+  -luser32 -lpsapi -ldwmapi -lshcore -o win-embed-overlay.exe
 ```
 
 ### Local test vault
 
 Use `npm run build:test` to build and copy all artifacts to a sibling `test-vault` directory.
+
+### Release workflow
+
+Publishing is handled by GitHub Actions. The workflow does the following on every version tag:
+
+- installs dependencies on a clean Ubuntu runner
+- verifies the Git tag matches `manifest.json` and `package.json`
+- verifies `versions.json` contains the current plugin version
+- runs the test suite and production build
+- cross-compiles `onenote-repos.exe` and `win-embed-overlay.exe` with MinGW-w64
+- creates a GitHub release with all plugin assets attached
+
+Release a new version with:
+
+```bash
+# 1. Update versions in manifest.json, package.json, and versions.json
+git add manifest.json package.json versions.json
+git commit -m "Release v1.3.2"
+git push origin master
+
+# 2. Push a matching version tag
+git tag v1.3.2
+git push origin v1.3.2
+```
+
+The generated release uploads:
+
+- `main.js`
+- `manifest.json`
+- `styles.css`
+- `versions.json`
+- `onenote-repos.exe`
+- `win-embed-overlay.exe`
 
 ### Tech stack
 

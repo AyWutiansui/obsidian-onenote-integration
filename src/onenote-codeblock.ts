@@ -47,6 +47,14 @@ export class OneNoteCodeBlockRenderer {
         return;
       }
 
+      if (!localService.hasExeFiles()) {
+        const errDiv = container.createDiv({ cls: 'onenote-error-message' });
+        const iconEl = errDiv.createSpan({ cls: 'onenote-item-icon' });
+        setIcon(iconEl, 'download');
+        errDiv.createSpan({ text: 'OneNote helper executables are being downloaded. Please reload this note once the download completes.' });
+        return;
+      }
+
       // Pre-calculate container height to maintain correct aspect ratio during skeleton loading.
       // Uses container.clientWidth (stable, always visible) for width estimation.
       // Embed container will be narrower than the container by wrapper padding + embed borders.

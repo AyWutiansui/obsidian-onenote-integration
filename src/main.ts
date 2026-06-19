@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf, Editor, Notice, PluginSettingTab, App, Setting }
 import { OneNoteLocalService } from './local-onenote-service';
 import { OneNoteEmbedView } from './onenote-view';
 import { OneNoteCodeBlockRenderer } from './onenote-codeblock';
+import { ensureExeFiles } from './exe-downloader';
 
 export interface OneNotePluginSettings {
   defaultNotebook: string;
@@ -89,9 +90,21 @@ export default class OneNoteIntegrationPlugin extends Plugin {
 
     // Initialize local OneNote service
     this.localOneNoteService = new OneNoteLocalService();
-    this.localOneNoteService.setPluginDir(
-      (this.app.vault.adapter as any).basePath + '/' + this.manifest.dir
-    );
+    const pluginDir = (this.app.vault.adapter as any).basePath + '/' + this.manifest.dir;
+    this.localOneNoteService.setPluginDir(pluginDir);
+
+    // Auto-download helper executables if missing (non-blocking)
+    ensureExeFiles(pluginDir, this.manifest.version).then(result => {
+      if (result === 'downloaded') {
+        console.log('[OneNote] Executables downloaded, reloading plugin...');
+        const plugins = (this.app as any).plugins;
+        plugins.disablePlugin(this.manifest.id).then(() => {
+          plugins.enablePlugin(this.manifest.id);
+        });
+      }
+    }).catch(e => {
+      console.error('[OneNote] exe check failed:', e);
+    });
 
     // Register code block renderer
     this.registerMarkdownCodeBlockProcessor('onenote', (source, el, ctx) => {
