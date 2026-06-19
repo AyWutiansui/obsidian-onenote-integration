@@ -31,7 +31,7 @@ export class MarkdownRenderChild {
 
 export class Plugin {
   app: any = {};
-  manifest: any = { dir: 'obsidian-onenote-integration' };
+  manifest: any = { dir: 'onenote-integration' };
   async loadData(): Promise<any> { return {}; }
   async saveData(_data: any): Promise<void> {}
   addCommand(_cmd: any): void {}

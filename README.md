@@ -31,7 +31,7 @@ Search for **OneNote Integration** in the Community Plugins browser inside Obsid
 ### Manual installation
 
 1. Build the plugin (see [Development](#development) below), or download `main.js`, `manifest.json`, and `styles.css` from the [latest release](../../releases)
-2. Copy them into `<vault>/.obsidian/plugins/obsidian-onenote-integration/`
+2. Copy them into `<vault>/.obsidian/plugins/onenote-integration/`
 3. Enable **OneNote Integration** in Obsidian → Settings → Community plugins
 
 > **Note:** On first launch the plugin automatically downloads the two helper executables (`onenote-repos.exe`, `win-embed-overlay.exe`) from the GitHub release. No manual compilation is required.

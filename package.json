@@ -1,12 +1,12 @@
 {
-  "name": "obsidian-onenote-integration",
-  "version": "1.3.2",
+  "name": "onenote-integration",
+  "version": "1.3.3",
   "description": "Embed and edit OneNote notes in Obsidian",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "build:test": "npm run build && node -e \"const fs=require('fs'),d='../test-vault/.obsidian/plugins/obsidian-onenote-integration';fs.mkdirSync(d,{recursive:true});['main.js','manifest.json','styles.css','onenote-repos.exe','win-embed-overlay.exe'].forEach(f=>{try{fs.copyFileSync(f,d+'/'+f)}catch(e){console.warn('skip:',f)}})\"",
+    "build:test": "npm run build && node -e \"const fs=require('fs'),d='../test-vault/.obsidian/plugins/onenote-integration';fs.mkdirSync(d,{recursive:true});['main.js','manifest.json','styles.css','onenote-repos.exe','win-embed-overlay.exe'].forEach(f=>{try{fs.copyFileSync(f,d+'/'+f)}catch(e){console.warn('skip:',f)}})\"",
     "watch": "node esbuild.config.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
