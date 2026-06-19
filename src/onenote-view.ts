@@ -135,11 +135,13 @@ export class OneNoteEmbedView extends ItemView {
       const badge = item.createSpan({ cls: 'onenote-item-count' });
       badge.textContent = `${childCount}`;
     }
-    item.addEventListener('click', onClick);
+    item.addEventListener('click', () => {
+      void onClick();
+    });
     item.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        onClick();
+        void onClick();
       }
     });
     return item;
@@ -178,11 +180,13 @@ export class OneNoteEmbedView extends ItemView {
     el.setAttribute('role', 'button');
     el.setAttribute('tabindex', '0');
     if (label) el.setAttribute('aria-label', label);
-    el.addEventListener('click', onClick);
+    el.addEventListener('click', () => {
+      void onClick();
+    });
     el.addEventListener('keydown', (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
-        onClick();
+        void onClick();
       }
     });
   }
@@ -265,11 +269,11 @@ export class OneNoteEmbedView extends ItemView {
     if (!trimmed) {
       // Empty query: restore the appropriate view based on current context
       if (this.currentSection) {
-        this.loadPages(this.currentSection, container);
+        void this.loadPages(this.currentSection, container);
       } else if (this.currentNotebook) {
-        this.loadSections(this.currentNotebook, container);
+        void this.loadSections(this.currentNotebook, container);
       } else {
-        this.loadNotebooks(container);
+        void this.loadNotebooks(container);
       }
       return;
     }

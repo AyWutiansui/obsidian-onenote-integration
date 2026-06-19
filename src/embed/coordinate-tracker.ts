@@ -327,8 +327,6 @@ export class CoordinateTracker {
     // Convert CSS pixels to physical pixels (Win32 API uses physical pixels)
     const borderLeft = this._cachedBorderLeft;
     const borderTop = this._cachedBorderTop;
-    const borderRight = this._cachedBorderRight;
-
     // Calculate where OneNote window would be positioned (physical pixels)
     // Offset inward by border width, reduce width by left+right borders
     const physLeft = Math.round((rect.left + borderLeft) * currentDpr);

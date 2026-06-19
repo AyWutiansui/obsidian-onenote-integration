@@ -180,9 +180,9 @@ export class OneNoteCodeBlockRenderer {
             if (isDebugEnabled()) {
               console.debug(`[OneNote Embed] Attempting embed, pageId: ${pageId}`);
             }
-            const hwnd = await localService.embedOneNoteWindow(pageId);
+            await localService.embedOneNoteWindow(pageId);
             if (isDebugEnabled()) {
-              console.debug(`[OneNote Embed] Embed SUCCESS, hwnd: ${hwnd}`);
+              console.debug('[OneNote Embed] Embed SUCCESS');
             }
             statusDiv.remove();
 
@@ -191,7 +191,7 @@ export class OneNoteCodeBlockRenderer {
             // viewport checks, sentinel coordinates, scroll/resize listeners)
             const tracker = new CoordinateTracker(embedContainer, (x, y, w, h) => {
               if (!localService.isActiveEmbedSession(embedSessionId)) return;
-              localService.repositionOneNoteWindow(x, y, w, h);
+              void localService.repositionOneNoteWindow(x, y, w, h);
 
               // Focus watchdog: if the overlay reposition stole focus from the
               // Obsidian editor, restore it. Throttled to once per 500ms to avoid
@@ -305,9 +305,8 @@ export class OneNoteCodeBlockRenderer {
               // COM navigation still runs to ensure OneNote is on the correct page.
               // If OneNote isn't running, the COM call triggers startup — cold-start
               // fallback waits 20s then retries with full stabilization.
-              let hwnd: string;
               try {
-                hwnd = await localService.embedOneNoteWindow(pageId, true);
+                await localService.embedOneNoteWindow(pageId, true);
               } catch (firstError: unknown) {
                 console.warn('[OneNote Embed] Fast embed failed, cold start retry:', getErrorMessage(firstError));
                 statusDiv.textContent = 'Starting OneNote... (this may take a moment)';
@@ -318,7 +317,7 @@ export class OneNoteCodeBlockRenderer {
                 }
                 await new Promise<void>((resolve) => window.setTimeout(resolve, 20000));
                 statusDiv.textContent = 'Embedding OneNote window...';
-                hwnd = await localService.embedOneNoteWindow(pageId, false);
+                await localService.embedOneNoteWindow(pageId, false);
               }
 
               // Success — clear status
@@ -332,7 +331,7 @@ export class OneNoteCodeBlockRenderer {
               // Create new coordinate tracker
               const tracker = new CoordinateTracker(embedContainer, (x, y, w, h) => {
                 if (!localService.isActiveEmbedSession(newSessionId)) return;
-                localService.repositionOneNoteWindow(x, y, w, h);
+                void localService.repositionOneNoteWindow(x, y, w, h);
               }, aspectRatio, container, overhead);
               currentTracker = tracker;
 
@@ -545,7 +544,7 @@ export class OneNoteCodeBlockRenderer {
       new Notice('Opening in OneNote...');
     } catch {
       try {
-        const doc = activeDocument ?? document;
+        const doc = activeDocument ?? window.document;
         const link = doc.createElement('a');
         link.href = url;
         link.hidden = true;
@@ -646,37 +645,39 @@ export class OneNoteCodeBlockRenderer {
     });
 
     // Section change → lazy load pages (one fast PowerShell call for this section only)
-    sectionSelect.addEventListener('change', async () => {
-      const secId = sectionSelect.value;
-      pageSelect.empty();
-
-      if (!secId) {
-        pageSelect.createEl('option', { text: 'Select a section first', value: '' });
-        pageSelect.disabled = true;
-        return;
-      }
-
-      pageSelect.disabled = true;
-      pageSelect.createEl('option', { text: 'Loading pages...', value: '' });
-
-      try {
-        const pages = await localService.getPages(secId);
+    sectionSelect.addEventListener('change', () => {
+      void (async () => {
+        const secId = sectionSelect.value;
         pageSelect.empty();
 
-        if (pages.length === 0) {
-          pageSelect.createEl('option', { text: 'No pages in this section', value: '' });
+        if (!secId) {
+          pageSelect.createEl('option', { text: 'Select a section first', value: '' });
+          pageSelect.disabled = true;
           return;
         }
 
-        pageSelect.createEl('option', { text: 'Select a page...', value: '' });
-        for (const page of pages as LocalOneNotePage[]) {
-          pageSelect.createEl('option', { text: page.title, value: page.id });
+        pageSelect.disabled = true;
+        pageSelect.createEl('option', { text: 'Loading pages...', value: '' });
+
+        try {
+          const pages: LocalOneNotePage[] = await localService.getPages(secId);
+          pageSelect.empty();
+
+          if (pages.length === 0) {
+            pageSelect.createEl('option', { text: 'No pages in this section', value: '' });
+            return;
+          }
+
+          pageSelect.createEl('option', { text: 'Select a page...', value: '' });
+          for (const page of pages) {
+            pageSelect.createEl('option', { text: page.title, value: page.id });
+          }
+          pageSelect.disabled = false;
+        } catch (err: unknown) {
+          pageSelect.empty();
+          pageSelect.createEl('option', { text: `Error: ${getErrorMessage(err)}`, value: '' });
         }
-        pageSelect.disabled = false;
-      } catch (err: unknown) {
-        pageSelect.empty();
-        pageSelect.createEl('option', { text: `Error: ${getErrorMessage(err)}`, value: '' });
-      }
+      })();
     });
 
     // --- Buttons ---

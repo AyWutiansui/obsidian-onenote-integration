@@ -16,11 +16,6 @@ type ElectronWindow = {
   getNativeWindowHandle(): Buffer;
 };
 
-interface ScreenWithAvail extends Screen {
-  availLeft?: number;
-  availTop?: number;
-}
-
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

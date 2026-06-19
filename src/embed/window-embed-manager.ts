@@ -1,13 +1,24 @@
 import { spawn, ChildProcess } from 'child_process';
 
-type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
+type TimerHandle = ReturnType<typeof window.setTimeout>;
+
+function getTimerApi(): { setTimeout: typeof setTimeout; clearTimeout: typeof clearTimeout } {
+  if (typeof window !== 'undefined') {
+    return window;
+  }
+
+  return {
+    setTimeout: global.setTimeout,
+    clearTimeout: global.clearTimeout,
+  };
+}
 
 function setManagedTimeout(callback: () => void, delayMs: number): TimerHandle {
-  return globalThis.setTimeout(callback, delayMs);
+  return getTimerApi().setTimeout(callback, delayMs);
 }
 
 function clearManagedTimeout(timer: TimerHandle): void {
-  globalThis.clearTimeout(timer);
+  getTimerApi().clearTimeout(timer);
 }
 
 /**

@@ -11,13 +11,13 @@
   transition: box-shadow 0.2s ease;
 }
 
-.onenote-embed-container--unbounded {
-  max-height: none !important;
+.markdown-rendered .onenote-embed-container--unbounded {
+  max-height: none;
 }
 
-.onenote-host-container {
+.markdown-rendered .onenote-host-container {
   height: var(--onenote-host-height);
-  max-height: none !important;
+  max-height: none;
 }
 
 .onenote-embed-container:hover {
@@ -270,20 +270,20 @@
   flex-wrap: wrap;
 }
 
-.onenote-icon-btn {
-  padding: 4px 8px !important;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
+.onenote-header .onenote-icon-btn {
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
   color: var(--text-muted);
   cursor: pointer;
   border-radius: 4px;
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 
-.onenote-icon-btn:hover {
+.onenote-header .onenote-icon-btn:hover {
   color: var(--text-normal);
-  background-color: var(--background-modifier-hover) !important;
+  background-color: var(--background-modifier-hover);
 }
 
 .onenote-header .onenote-platform-info {

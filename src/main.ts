@@ -136,7 +136,8 @@ export default class OneNoteIntegrationPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const loadedData = (await this.loadData()) as Partial<OneNotePluginSettings> | null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData ?? {});
   }
 
   async saveSettings() {
@@ -172,7 +173,7 @@ export default class OneNoteIntegrationPlugin extends Plugin {
     }
 
     if (leaf) {
-      workspace.revealLeaf(leaf);
+      void workspace.revealLeaf(leaf);
     }
   }
 
