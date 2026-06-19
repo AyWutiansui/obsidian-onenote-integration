@@ -1,6 +1,6 @@
 {
   "name": "onenote-integration",
-  "version": "1.3.8",
+  "version": "1.3.9",
   "description": "Embed and edit OneNote notes in Obsidian",
   "main": "main.js",
   "scripts": {
