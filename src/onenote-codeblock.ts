@@ -35,7 +35,7 @@ export class OneNoteCodeBlockRenderer {
       const container = el.createDiv({ cls: 'onenote-embed-container' });
       const cleanupChild = new OneNoteEmbedCleanupChild(container);
       ctx.addChild(cleanupChild);
-      container.setCssProps({ 'max-height': 'none' });  // Override Obsidian's code block max-height
+      container.addClass('onenote-embed-container--unbounded');
 
       const localService = this.plugin.getOneNoteLocalService();
 

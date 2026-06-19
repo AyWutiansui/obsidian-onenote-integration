@@ -260,10 +260,8 @@ export class CoordinateTracker {
     if (this._hostContainer) {
       const hostHeight = embedCssHeight + this._hostExtraHeight;
       const hostHeightStr = `${hostHeight}px`;
-      if (this._hostContainer.style.height !== hostHeightStr) {
-        this._hostContainer.setCssStyles({ height: hostHeightStr });
-        this._hostContainer.setCssProps({ 'max-height': 'none' });
-      }
+      this._hostContainer.setCssStyles({ height: hostHeightStr });
+      this._hostContainer.setCssProps({ 'max-height': 'none' });
     }
 
     // Recalculate chrome offset every time — handles maximize/resize/state changes

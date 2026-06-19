@@ -205,11 +205,11 @@ class OneNoteSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     new Setting(containerEl)
-      .setName('OneNote Integration Settings')
+      .setName('General')
       .setHeading();
 
     new Setting(containerEl)
-      .setName('Local OneNote Settings')
+      .setName('Local OneNote')
       .setHeading();
 
     containerEl.createEl('p', {
