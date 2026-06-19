@@ -259,9 +259,11 @@ export class CoordinateTracker {
     // Set host container height to match total card height (embed + overhead)
     if (this._hostContainer) {
       const hostHeight = embedCssHeight + this._hostExtraHeight;
-      const hostHeightStr = `${hostHeight}px`;
-      this._hostContainer.setCssStyles({ height: hostHeightStr });
-      this._hostContainer.setCssProps({ 'max-height': 'none' });
+      this._hostContainer.addClass('onenote-host-container');
+      this._hostContainer.setCssProps({
+        '--onenote-host-height': `${hostHeight}px`,
+        'max-height': 'none'
+      });
     }
 
     // Recalculate chrome offset every time — handles maximize/resize/state changes

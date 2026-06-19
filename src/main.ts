@@ -205,7 +205,7 @@ class OneNoteSettingTab extends PluginSettingTab {
     containerEl.empty();
 
     new Setting(containerEl)
-      .setName('General')
+      .setName('Connection')
       .setHeading();
 
     new Setting(containerEl)

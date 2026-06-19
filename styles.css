@@ -15,6 +15,11 @@
   max-height: none !important;
 }
 
+.onenote-host-container {
+  height: var(--onenote-host-height);
+  max-height: none !important;
+}
+
 .onenote-embed-container:hover {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
