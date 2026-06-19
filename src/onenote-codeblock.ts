@@ -35,7 +35,7 @@ export class OneNoteCodeBlockRenderer {
       const container = el.createDiv({ cls: 'onenote-embed-container' });
       const cleanupChild = new OneNoteEmbedCleanupChild(container);
       ctx.addChild(cleanupChild);
-      container.style.setProperty('max-height', 'none', 'important');  // Override Obsidian's code block max-height
+      container.setCssProps({ 'max-height': 'none' });  // Override Obsidian's code block max-height
 
       const localService = this.plugin.getOneNoteLocalService();
 
@@ -62,7 +62,7 @@ export class OneNoteCodeBlockRenderer {
         const estimatedEmbedWidth = Math.max(200, (container.clientWidth || 800) - 34);
         const preRatio = this.plugin.settings.embedAspectRatio || 2 / 3;
         const preHeight = Math.max(400, Math.min(1200, Math.round(estimatedEmbedWidth * preRatio)));
-        container.style.setProperty('height', `${preHeight + 83}px`, 'important');
+        container.setCssProps({ height: `${preHeight + 83}px` });
       }
 
       // Show skeleton loading
@@ -84,8 +84,7 @@ export class OneNoteCodeBlockRenderer {
           // Detach/Attach button — right side of title bar, with margin to avoid Obsidian's edit block button
           const toolbarDetachBtn = titleBar.createEl('button', { cls: 'onenote-embed-toolbar-btn', attr: { 'aria-label': 'Detach window', title: 'Detach window' } });
           setIcon(toolbarDetachBtn, 'maximize-2');
-          toolbarDetachBtn.style.marginLeft = 'auto';
-          toolbarDetachBtn.style.marginRight = '36px';
+          toolbarDetachBtn.setCssStyles({ marginLeft: 'auto', marginRight: '36px' });
 
           // Live window embed (local mode)
           let cleanupEmbed: (() => Promise<void>) | null = null;
@@ -110,7 +109,7 @@ export class OneNoteCodeBlockRenderer {
 
           // Detached placeholder (hidden initially)
           const detachedPlaceholder = container.createDiv({ cls: 'onenote-embed-detached' });
-          detachedPlaceholder.style.display = 'none';
+          detachedPlaceholder.hide();
           const detachIcon = detachedPlaceholder.createSpan();
           setIcon(detachIcon, 'monitor-off');
           detachedPlaceholder.createSpan({ text: 'OneNote window detached' });
@@ -142,8 +141,8 @@ export class OneNoteCodeBlockRenderer {
             container.clientWidth - wrapperPadLeft - wrapperPadRight - embedBorderLeft - embedBorderRight);
           const aspectRatio = this.plugin.settings.embedAspectRatio || 2 / 3;
           let embedHeight = Math.max(400, Math.min(1200, Math.round(actualWidth * aspectRatio)));
-          embedContainer.style.height = `${embedHeight}px`;
-          container.style.height = `${embedHeight + overhead}px`;
+          embedContainer.setCssStyles({ height: `${embedHeight}px` });
+          container.setCssStyles({ height: `${embedHeight + overhead}px` });
 
           // Window resize handler — recalculates embed height when container width changes.
           // The CoordinateTracker reads this height for native window sizing, so it must stay current.
@@ -153,8 +152,8 @@ export class OneNoteCodeBlockRenderer {
             const newHeight = Math.max(400, Math.min(1200, Math.round(newWidth * aspectRatio)));
             if (newHeight !== embedHeight) {
               embedHeight = newHeight;
-              embedContainer.style.height = `${embedHeight}px`;
-              container.style.height = `${embedHeight + overhead}px`;
+              embedContainer.setCssStyles({ height: `${embedHeight}px` });
+              container.setCssStyles({ height: `${embedHeight + overhead}px` });
               if (currentTracker) currentTracker.forceUpdate();
             }
           };
@@ -245,11 +244,11 @@ export class OneNoteCodeBlockRenderer {
             }
 
             // Hide embed wrapper, show detached placeholder
-            embedWrapper.style.display = 'none';
-            detachedPlaceholder.style.display = '';
+            embedWrapper.hide();
+            detachedPlaceholder.show();
 
             // Recalculate container height without embed
-            container.style.height = '';
+            container.setCssStyles({ height: '' });
 
             // Update UI
             toolbarDetachBtn.setAttribute('title', 'Attach window');
@@ -259,8 +258,8 @@ export class OneNoteCodeBlockRenderer {
 
           const doAttach = async () => {
             // Show wrapper first so layout is correct
-            detachedPlaceholder.style.display = 'none';
-            embedWrapper.style.display = '';
+            detachedPlaceholder.hide();
+            embedWrapper.show();
 
             // Recalculate embedHeight from container.clientWidth (stable, always visible).
             // This avoids relying on embedContainer.clientWidth which may return 0
@@ -270,8 +269,8 @@ export class OneNoteCodeBlockRenderer {
             embedHeight = Math.max(400, Math.min(1200, Math.round(currentWidth * aspectRatio)));
 
             // Set heights (using recalculated value)
-            embedContainer.style.height = `${embedHeight}px`;
-            container.style.height = `${embedHeight + overhead}px`;
+            embedContainer.setCssStyles({ height: `${embedHeight}px` });
+            container.setCssStyles({ height: `${embedHeight + overhead}px` });
 
             // Show embedding status indicator
             embedContainer.empty();
@@ -308,8 +307,8 @@ export class OneNoteCodeBlockRenderer {
               statusDiv.remove();
 
               // Show embed wrapper, hide detached placeholder
-              embedWrapper.style.display = '';
-              detachedPlaceholder.style.display = 'none';
+              embedWrapper.show();
+              detachedPlaceholder.hide();
 
               // Position tracking version doesn't need reparenting
               // Create new coordinate tracker
@@ -331,8 +330,8 @@ export class OneNoteCodeBlockRenderer {
               cleanupChild.setCleanup(cleanupEmbed);
 
               // Show embed container with calculated height
-              embedContainer.style.height = `${embedHeight}px`;
-              container.style.height = `${embedHeight + overhead}px`;
+              embedContainer.setCssStyles({ height: `${embedHeight}px` });
+              container.setCssStyles({ height: `${embedHeight + overhead}px` });
 
               // Update UI
               toolbarDetachBtn.setAttribute('title', 'Detach window');
@@ -375,8 +374,7 @@ export class OneNoteCodeBlockRenderer {
             isResizing = true;
             startY = e.clientY;
             startHeight = embedContainer.offsetHeight;
-            document.body.style.cursor = 'ns-resize';
-            document.body.style.userSelect = 'none';
+            document.body.setCssStyles({ cursor: 'ns-resize', userSelect: 'none' });
             e.preventDefault();
           });
 
@@ -384,15 +382,14 @@ export class OneNoteCodeBlockRenderer {
             if (!isResizing) return;
             const delta = e.clientY - startY;
             const newHeight = Math.max(200, Math.min(1600, startHeight + delta));
-            embedContainer.style.height = `${newHeight}px`;
-            container.style.height = `${newHeight + overhead}px`;
+            embedContainer.setCssStyles({ height: `${newHeight}px` });
+            container.setCssStyles({ height: `${newHeight + overhead}px` });
           };
 
           const onMouseUp = () => {
             if (!isResizing) return;
             isResizing = false;
-            document.body.style.cursor = '';
-            document.body.style.userSelect = '';
+            document.body.setCssStyles({ cursor: '', userSelect: '' });
             // Save new height for this session
             embedHeight = embedContainer.offsetHeight;
             if (currentTracker) currentTracker.forceUpdate();
@@ -541,7 +538,7 @@ export class OneNoteCodeBlockRenderer {
       try {
         const link = document.createElement('a');
         link.href = url;
-        link.style.display = 'none';
+        link.hidden = true;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);

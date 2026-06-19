@@ -114,7 +114,6 @@ export default class OneNoteIntegrationPlugin extends Plugin {
   }
 
   onunload() {
-    this.app.workspace.detachLeavesOfType(ONE_NOTE_VIEW_TYPE);
     this.statusBarEl = null;
     // Release embedded OneNote window on plugin unload
     if (this.localOneNoteService) {
@@ -205,10 +204,13 @@ class OneNoteSettingTab extends PluginSettingTab {
 
     containerEl.empty();
 
-    containerEl.createEl('h2', { text: 'OneNote Integration Settings' });
+    new Setting(containerEl)
+      .setName('OneNote Integration Settings')
+      .setHeading();
 
-    // Local mode settings
-    containerEl.createEl('h3', { text: 'Local OneNote Settings' });
+    new Setting(containerEl)
+      .setName('Local OneNote Settings')
+      .setHeading();
 
     containerEl.createEl('p', {
       text: 'This plugin connects directly to your installed OneNote desktop application. No Azure configuration needed.'

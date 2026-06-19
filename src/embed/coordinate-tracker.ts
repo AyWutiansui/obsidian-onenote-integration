@@ -261,8 +261,8 @@ export class CoordinateTracker {
       const hostHeight = embedCssHeight + this._hostExtraHeight;
       const hostHeightStr = `${hostHeight}px`;
       if (this._hostContainer.style.height !== hostHeightStr) {
-        this._hostContainer.style.height = hostHeightStr;
-        this._hostContainer.style.setProperty('max-height', 'none', 'important');
+        this._hostContainer.setCssStyles({ height: hostHeightStr });
+        this._hostContainer.setCssProps({ 'max-height': 'none' });
       }
     }
 

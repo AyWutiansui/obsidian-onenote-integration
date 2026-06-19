@@ -1,4 +1,4 @@
-import { Notice } from 'obsidian';
+import { Notice, Platform } from 'obsidian';
 import { LocalOneNotePage, LocalOneNoteSection, LocalOneNoteNotebook } from './types';
 import { EmbedSessionManager } from './services/embed-session';
 import { WindowEmbedManager } from './embed/window-embed-manager';
@@ -39,8 +39,8 @@ export class OneNoteLocalService {
   }
 
   constructor() {
-    this.isWindows = navigator.platform.toLowerCase().includes('win');
-    this.isMac = navigator.platform.toLowerCase().includes('mac');
+    this.isWindows = Platform.isWin;
+    this.isMac = Platform.isMacOS;
   }
 
   /**

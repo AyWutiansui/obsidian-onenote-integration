@@ -1,9 +1,9 @@
 {
   "id": "onenote-integration",
   "name": "OneNote Integration",
-  "version": "1.3.3",
-  "minAppVersion": "1.0.0",
-  "description": "Embed and edit OneNote notes directly in Obsidian via local COM integration — real window embedding, sidebar browsing, and interactive page selection.",
+  "version": "1.3.4",
+  "minAppVersion": "1.8.0",
+  "description": "Embed and edit OneNote notes via local COM integration with real window embedding, sidebar browsing, and interactive page selection.",
   "author": "Qoder",
   "isDesktopOnly": true
 }
